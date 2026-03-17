@@ -1,2 +1,5 @@
 # TheClaw
-the claw that wraps all commands into one unified app
+TheClaw wraps all commands repos into one unified (distributable) agent platform.
+
+
+
