@@ -9,32 +9,32 @@ TheClaw is a agent runtime that inherits core principles from OpenClaw with seve
   - Keep human/agent or agent/agent collaboration consistent and easily manageable.
   - Improve system observability/auditability/recoverability/etc.
 
-See DESIGN.md (just brain dump) for more details.
-
 # This Repo
 
-TheClaw wraps all commands repos into one unified distributable agent platform.
+`TheClaw` repo wraps all commands repos into one unified distributable agent platform.
 
 NOTE: This is still in very early research and development phase, not ready yet.
 
 # Current Progress: Architecting
 
+See [TheClawArchitecture.md](TheClawArchitecture.md)。
+
 **Completed:**
-1. pai: LLM interaction command
+1. pai: LLM interaction command.
 - Support many providers/models, embedding, chat with basic session support and stream mode. 
 - It's a thin wrapper of @mariozechner/pi-ai.
-2. cmds: command discover command
-- Natural language search and smart routing to executable commands, backed by tldr-pages data and semantic search via xdb.
+2. cmds: command discover command.
+- Natural language search and information for all available commands, backed by tldr-pages data and semantic search via xdb.
 3. xdb: data collection command.
-- Intent-driven data hub CLI. 
-- Unified interface over LanceDB (vector) and SQLite (relational/FTS), with automatic embedding (internal or via pai).
+- Unified interface over LanceDB (vector) and SQLite (relational/FTS), with automatic embedding.
+- Intent-based data collection policy for common scenarios.
 4. xweb: web interaction command.
-- search, fetch, etc. For both humans and LLM agents.
+- search, fetch, explore, etc. For both humans and LLM agents.
 - support brave/tavily/serper provider, fallback to simple fetch based search with Bing or Google.
+5. notifier: daemon and command for task scheduling.
 
 **Planned:**
 1. thread: thread management command.
-2. agent: agent management and interaction command.
-3. xgw: gateway command.
-- Possiblly a thin wrapper of the gateway part of OpenClaw.
+2. agent: agent management command.
+3. xgw: gateway daemon & command.
 
