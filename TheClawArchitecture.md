@@ -127,7 +127,7 @@ Unix 风格 CLI，调用 LLM、管理 provider 配置、维护 session 历史。
 
 文件驱动的任务调度 daemon，支持即时任务和 CRON 定时任务。
 
-主要命令: `notifier task add/list/remove`, `notifier timer add/list/remove`, `notifier --daemon`, `notifier status`
+主要命令: `notifier task add/list/remove`, `notifier timer add/list/remove`, `notifier start [--foreground]`, `notifier stop`, `notifier status`
 
 ### thread — 事件队列层
 
