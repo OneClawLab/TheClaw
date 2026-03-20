@@ -197,14 +197,12 @@ xgw 将各渠道消息归一化为统一 Message 结构，通过两层路由（x
 **Thread 拓扑**:
 ```
 agents/<agent_id>/
-  inbox/    → 私有 thread，入站队列
-  memory/   → 私有 thread，只能自己读写
-  tasks/    → 非共享 thread，仅自己可见
-threads/
-  tasks/    → 共享 thread，可被多个 agent 订阅
-  archive/  → 历史 thread，可回溯
-  global/   → 系统 thread，默认订阅者是系统 agent
+  inbox/    → 私有 thread，入站队列（xgw 和其他 agent 通过 thread push 写入）
+  threads/  → 私有 thread，按路由规则创建的对话 thread
+  workdir/  → 临时工作区
 ```
+
+所有 thread 均为 agent 私有，不存在全局共享 thread。agent 间通信统一通过向目标 agent 的 inbox `thread push`（source 使用 `internal:...` 地址格式，详见 GatewayRouting.md）。
 
 ---
 

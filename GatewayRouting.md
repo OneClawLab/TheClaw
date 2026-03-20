@@ -64,6 +64,67 @@ xgw 打包的内容:
 **出站透传规则**: agent 回复时，必须把入站消息的 `reply_context` 原样附加到回复 event 上。outbound consumer 从回复 event 的 `reply_context` 中提取全部出站路由信息传给 `xgw send`。agent 的 LLM 逻辑不需要感知 `reply_context` 的内容——由 agent 运行时框架自动处理透传。
 
 agent 路由时只使用一级属性（peer_id、session_type、session_id 等）；`reply_context` 对 agent 路由逻辑完全透明。
+
+---
+
+## Message 到 Thread Event 的映射
+
+xgw 将归一化后的 Message 写入 agent inbox（通过 `thread push`）时，需要将 Message 字段映射为 thread event 字段。映射规则如下：
+
+### source 字段构造
+
+event 的 `source` 字段采用结构化地址格式（详见 thread SPEC 4.3 节），编码 Message 的路由关键属性：
+
+```
+external:<channel_type>:<channel_id>:<session_type>:<session_id>:<peer_id>
+```
+
+所有段的值统一小写。示例：
+- Telegram 单聊 Alice: `external:telegram:tg-main:dm:alice:alice`
+- Telegram 群聊 Bob: `external:telegram:tg-main:group:grp-123:bob`
+- 子会话: `external:telegram:tg-main:group:grp-123/topic-456:alice`
+
+### 完整映射表
+
+| Message 字段 | → Event 字段 | 说明 |
+|-------------|-------------|------|
+| `channel_type` + `channel_id` + `session_type` + `session_id` + `peer_id` | `source` | 组合为 `external:...` 结构化地址 |
+| `type` | `type` | `message` 或 `record`（由 mention gating 决定） |
+| (无) | `subtype` | 通常为 null；未触发 mention 的群聊消息 type=record 时 subtype=`message` |
+| `text` + `attachments` + `reply_to` + `reply_context` | `content` | 序列化为 JSON 字符串 |
+
+### content 的 JSON 结构
+
+```json
+{
+  "text": "消息文本",
+  "attachments": [],
+  "reply_to": null,
+  "reply_context": { ... }
+}
+```
+
+agent 从 inbox 消费消息时，从 `source` 解析路由属性（`split(':')`），从 `content` 解析消息内容。`reply_context` 在 content 中原样保留，agent 回复时透传。
+
+### Agent 间通信的映射
+
+agent 间通信（通过 `thread push` 写入目标 agent inbox）使用 `internal` 前缀的 source：
+
+```
+internal:<session_type>:<session_id>:<sender_agent_id>
+```
+
+示例：warden 向 admin 发告警 → `internal:dm:default:warden`
+
+接收方 agent 的 inbox consumer 对 `external` 和 `internal` 来源使用统一的处理逻辑——都是来自某个 actor 的消息，只是路由属性的解析方式略有不同（段数不同）。
+
+### Agent 自身 record 事件
+
+agent 写入自己的 thread 的 record 事件（toolcall、decision）使用 `self` 作为 source：
+
+```bash
+thread push --thread <path> --source self --type record --subtype toolcall --content '...'
+```
 ---
 
 ## 两层路由
