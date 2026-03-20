@@ -111,15 +111,15 @@ Unix 风格 CLI，调用 LLM、管理 provider 配置、维护 session 历史。
 
 主要命令: `cmds find <query>`, `cmds info <command>`, `cmds list`, `cmds scan`
 
-### xdb — 数据中心层
+### xdb — 数据集管理层
 
-意图驱动的数据中心 CLI，内部透明整合 LanceDB (向量) 与 SQLite (关系/FTS)。Policy 驱动的集合管理，内置 embedding 能力，JSONL 输入输出。
+意图驱动的数据集管理命令，内部透明整合 LanceDB (向量) 与 SQLite (关系/FTS)。Policy 驱动的集合管理，内置 embedding 能力，JSONL 输入输出。
 
 主要命令: `xdb put`, `xdb find`, `xdb embed`, `xdb col init/list/info/rm`
 
 ### xweb — 互联网访问层
 
-为 AI Agent 设计的互联网出口，将网页内容转换为 LLM 友好的数据流。多 provider 搜索，网页抓取并清洗。
+为 AI Agent 设计的互联网访问工具，将网页内容转换为 LLM 友好的数据流。多 provider 搜索，网页抓取并清洗，网站结构探索等。
 
 主要命令: `xweb search <query>`, `xweb fetch <url>`, `xweb explore <url>`
 
