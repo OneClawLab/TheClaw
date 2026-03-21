@@ -17,7 +17,7 @@ NOTE: This is still in very early research and development phase, not ready yet.
 
 # Current Progress: Architecting
 
-See [TheClawArchitecture.md](TheClawArchitecture.md)。
+See [TheClawArchitecture.md](arch/TheClawArchitecture.md)。
 
 **Completed:**
 1. pai: LLM interaction command.
