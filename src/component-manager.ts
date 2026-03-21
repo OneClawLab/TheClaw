@@ -2,7 +2,7 @@ import { readFile } from 'fs/promises'
 import yaml from 'js-yaml'
 import type { ComponentDef, ComponentsConfig, ComponentStatus } from './types.js'
 import { CliError } from './profile-loader.js'
-import { commandExists, execCommand, execShell } from './os-utils.js'
+import { commandExists, execCommand, execShell } from './repo-utils/os.js'
 
 export function extractVersion(output: string): string | null {
   const match = /v?(\d+\.\d+\.\d+)/.exec(output)

@@ -1,7 +1,7 @@
 import type { ComponentDef, ComponentsConfig } from '../types.js'
 import { loadComponents, getInstalledVersion, needsUpgrade, installComponent } from '../component-manager.js'
 import { readConfig } from '../config.js'
-import { execShell } from '../os-utils.js'
+import { execShell } from '../repo-utils/os.js'
 import { CliError } from '../profile-loader.js'
 
 export interface UpgradeOptions {

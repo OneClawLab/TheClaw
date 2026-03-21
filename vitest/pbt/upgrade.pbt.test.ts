@@ -4,15 +4,15 @@ import { installComponent } from '../../src/component-manager.js'
 import { filterComponents } from '../../src/commands/upgrade.js'
 import type { ComponentDef, ComponentsConfig } from '../../src/types.js'
 
-// Mock os-utils to track shell command calls
-vi.mock('../../src/os-utils.js', () => ({
+// Mock repo-utils/os.js to track shell command calls
+vi.mock('../../src/repo-utils/os.js', () => ({
   commandExists: vi.fn().mockResolvedValue(false),
   execCommand: vi.fn().mockResolvedValue({ stdout: '', stderr: '' }),
   execShell: vi.fn().mockResolvedValue({ stdout: '', stderr: '' }),
   spawnCommand: vi.fn().mockResolvedValue({ stdout: '', stderr: '' }),
 }))
 
-import { execShell } from '../../src/os-utils.js'
+import { execShell } from '../../src/repo-utils/os.js'
 
 // Realistic install command: e.g. "npm install -g foo", "brew install foo"
 const installArb = fc.oneof(

@@ -4,11 +4,11 @@ import { formatStatusJson, fetchComponentStatus } from '../../src/commands/statu
 import type { StatusResult } from '../../src/types.js'
 
 // Mock execShell so Property 10 never actually runs shell commands
-vi.mock('../../src/os-utils.js', () => ({
+vi.mock('../../src/repo-utils/os.js', () => ({
   execShell: vi.fn(),
 }))
 
-import { execShell } from '../../src/os-utils.js'
+import { execShell } from '../../src/repo-utils/os.js'
 const mockExecShell = vi.mocked(execShell)
 
 const agentStatusArb = fc.record({

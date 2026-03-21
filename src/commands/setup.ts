@@ -3,7 +3,7 @@ import type { TheClawConfig } from '../types.js'
 import { readConfig, writeConfig } from '../config.js'
 import { loadComponents, checkAll, installComponent } from '../component-manager.js'
 import { loadProfile, extractPlaceholders, fillPlaceholders } from '../profile-loader.js'
-import { execShell } from '../os-utils.js'
+import { execShell } from '../repo-utils/os.js'
 import { join, dirname } from 'path'
 import { fileURLToPath } from 'url'
 

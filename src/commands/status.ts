@@ -1,5 +1,5 @@
 import type { StatusResult, NotifierStatus, XgwStatus, AgentStatus } from '../types.js'
-import { execShell } from '../os-utils.js'
+import { execShell } from '../repo-utils/os.js'
 
 export interface StatusOptions {
   json?: boolean
