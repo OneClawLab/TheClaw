@@ -1,0 +1,30 @@
+name: standard
+steps:
+  - type: install-components
+
+  - type: load-profile
+
+  - type: configure-pai
+    model: ${PAI_MODEL}
+    api_key: ${PAI_API_KEY}
+
+  - type: init-agents
+    agents:
+      - admin
+      - warden
+      - maintainer
+      - evolver
+
+  - type: start-notifier
+
+  - type: configure-xgw
+    port: ${XGW_PORT}
+
+  - type: start-agents
+    agents:
+      - admin
+      - warden
+      - maintainer
+      - evolver
+
+  - type: smoke-test

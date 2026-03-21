@@ -1,0 +1,14 @@
+name: minimal
+steps:
+  - type: install-components
+
+  - type: configure-pai
+    model: ${PAI_MODEL}
+
+  - type: init-agents
+    agents:
+      - admin
+
+  - type: start-notifier
+
+  - type: smoke-test
