@@ -38,3 +38,9 @@ See [TheClawArchitecture.md](arch/TheClawArchitecture.md)。
 2. agent: agent management command.
 3. xgw: gateway daemon & command.
 
+
+# Install
+
+```bash
+npm install -g @theclawlab/theclaw
+```

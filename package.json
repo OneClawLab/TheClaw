@@ -1,6 +1,6 @@
 {
-  "name": "theclaw",
-  "version": "1.0.0",
+  "name": "@theclawlab/theclaw",
+  "version": "1.0.3",
   "description": "TheClaw setup and config CLI command",
   "type": "module",
   "engines": {
@@ -16,8 +16,19 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "npx tsc --noEmit",
-    "release:local": "npm run build && npm link"
+    "release:local": "npm run build && npm link",
+    "release:public": "npm test && npm run build && npm publish --access public",
+    "release:public:skip-test": "npm run build && npm publish --access public"
   },
+  "license": "MIT",
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "dependencies": {
     "@inquirer/prompts": "^7.0.0",
     "commander": "^12.0.0",
