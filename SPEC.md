@@ -7,7 +7,7 @@ theclaw 是系统的组装/配置/观测入口。它不是运行时依赖——s
 ## 设计原则
 
 1. **薄壳层**。theclaw 自身不实现业务逻辑，只编排各组件的 CLI 命令。
-2. **components.yaml 驱动**。组件版本和安装方式声明在 `components.yaml` 中，不使用 package.json dependencies。
+2. **内置 Provider 驱动**。组件版本和安装方式内置在代码中，通过 `--provider` 参数选择，不使用 package.json dependencies 也不依赖外部 components.yaml 文件。
 3. **Profile 驱动初始化**。所有 setup 行为由 profile 文件声明（详见 [BootstrapDesign.md](BootstrapDesign.md)）。
 4. **可观测性优先**。提供一组 status/logs/trace 脚本，让人类和 maintainer agent 都能快速了解系统状态。
 
@@ -17,7 +17,6 @@ theclaw 是系统的组装/配置/观测入口。它不是运行时依赖——s
 
 ```
 TheClaw/
-├── components.yaml           # 组件版本与安装方式声明
 ├── profiles/
 │   ├── minimal.yaml          # 最简配置 profile
 │   └── standard.yaml         # 标准配置 profile
@@ -34,7 +33,7 @@ TheClaw/
 │   │   ├── status.ts         # theclaw status
 │   │   └── upgrade.ts        # theclaw upgrade
 │   ├── profile-loader.ts     # Profile YAML 解析、占位符填充
-│   ├── component-manager.ts  # components.yaml 解析、组件检测与安装
+│   ├── component-manager.ts  # 组件检测与安装（provider 内置在代码中）
 │   └── types.ts              # 共享类型定义
 ├── package.json
 ├── tsconfig.json
@@ -42,73 +41,43 @@ TheClaw/
 └── SPEC.md
 ```
 
-theclaw 本身也是一个 npm 包（`theclaw` 命令），但它不把其他组件声明为 npm dependencies。组件的安装方式由 `components.yaml` 决定。
+theclaw 本身也是一个 npm 包（`theclaw` 命令），但它不把其他组件声明为 npm dependencies。组件的版本和安装方式内置在代码中（`src/components.ts`），通过 `--provider` 参数选择。
 
 ---
 
-## components.yaml
+## Components Provider
 
-声明系统所有组件的版本和安装方式。theclaw setup/upgrade 读取此文件来检测、安装、升级组件。
+"怎么安装"由 provider 决定，内置在 theclaw 代码中。通过 `--provider` 参数选择，默认使用 `registry`。
 
-```yaml
-# components.yaml
-schema_version: "1"
-
-components:
-  pai:
-    version: "0.5.0"
-    command: pai                    # 用于 which 检测
-    install: npm install -g pai    # 安装命令（可替换为其他方式）
-
-  cmds:
-    version: "0.3.0"
-    command: cmds
-    install: npm install -g cmds
-
-  xdb:
-    version: "0.4.0"
-    command: xdb
-    install: npm install -g xdb
-
-  xweb:
-    version: "0.2.0"
-    command: xweb
-    install: npm install -g xweb
-
-  notifier:
-    version: "0.3.0"
-    command: notifier
-    install: npm install -g notifier
-
-  thread:
-    version: "0.3.0"
-    command: thread
-    install: npm install -g thread
-
-  agent:
-    version: "0.1.0"
-    command: agent
-    install: npm install -g agent
-
-  xgw:
-    version: "0.1.0"
-    command: xgw
-    install: npm install -g xgw
+```bash
+theclaw setup --provider registry   # 默认
+theclaw setup --provider local
+theclaw upgrade --provider local
 ```
 
-### 字段说明
+### 内置 Provider
 
-| 字段 | 说明 |
-|------|------|
-| `version` | 期望版本。setup 时检测已安装版本，不匹配则安装/升级 |
-| `command` | 可执行命令名，用于 `which` 检测是否已安装 |
-| `install` | 安装命令。可以是 `npm install -g`、`cargo install`、下载二进制等任意方式 |
+**`registry`**（默认）
 
-### 设计意图
+从 npm registry 安装：
 
-- 不绑定 npm 生态。未来某个组件可以用 Rust 重写，只需改 `install` 字段。
-- 版本检测通过 `<command> --version` 获取，与 `version` 字段比较。
-- `install` 字段是完整的 shell 命令，theclaw 直接执行，不做解析。
+```
+npm install -g @theclaw/<name>@<version>
+```
+
+**`local`**
+
+从本地源码构建并 link，依赖环境变量 `THECLAW_SOURCE_ROOT`：
+
+```
+cd ${THECLAW_SOURCE_ROOT}/<name> && npm run build && npm link
+```
+
+版本检测在 local 模式下只做 warning，不强制匹配（开发时版本号不重要）。
+
+### 扩展性
+
+未来新增 provider（如 `brew`、`cargo`、`binary`）只需在代码中添加实现，`components.yaml` 无需改动。
 
 ---
 
@@ -129,7 +98,7 @@ theclaw setup [--profile <name|path>] [--reset]
 
 **执行摘要**：
 
-1. 读取 `components.yaml`，检测并安装缺失组件
+1. 读取内置 provider 中的组件列表，检测并安装缺失组件
 2. 加载 profile，交互式填充 `${VAR}` 占位符
 3. 配置 pai providers
 4. 初始化 agents（admin → warden → maintainer → evolver）
@@ -228,7 +197,7 @@ theclaw upgrade [--component <name>] [--dry-run]
 
 **执行逻辑**：
 
-1. 读取 `components.yaml` 中各组件的目标版本
+1. 读取内置 provider 中各组件的目标版本
 2. 对每个组件执行 `<command> --version`，比较当前版本与目标版本
 3. 版本不匹配的组件，执行 `install` 字段中的安装命令（npm install -g 会自动升级）
 4. 升级完成后，对受影响的运行中组件执行 graceful restart：
@@ -263,7 +232,6 @@ theclaw 只管理自己的配置，不侵入各组件的配置空间：
 |------|------|--------|
 | theclaw 自身配置 | `~/.config/theclaw/config.json` | theclaw |
 | 使用的 profile 记录 | `~/.config/theclaw/config.json` | theclaw |
-| components.yaml | 随 theclaw 包分发 | theclaw |
 | pai 配置 | `~/.config/pai/default.json` | pai（setup 时由 theclaw 通过 `pai model config` 写入） |
 | xgw 配置 | `~/.config/xgw/config.yaml` | xgw（setup 时由 theclaw 直接写入） |
 | agent 配置 | `~/.theclaw/agents/<id>/config.yaml` | agent（setup 时由 theclaw 通过 `agent init` 写入） |

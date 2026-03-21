@@ -1,7 +1,7 @@
 {
   "name": "theclaw",
-  "version": "0.1.0",
-  "description": "Agent runtime platform assembly, configuration and observability CLI",
+  "version": "1.0.0",
+  "description": "TheClaw setup and config CLI command",
   "type": "module",
   "engines": {
     "node": ">=22.0.0"
@@ -15,12 +15,13 @@
     "dev": "tsup --watch",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "npx tsc --noEmit"
+    "typecheck": "npx tsc --noEmit",
+    "release:local": "npm run build && npm link"
   },
   "dependencies": {
     "@inquirer/prompts": "^7.0.0",
     "commander": "^12.0.0",
-    "js-yaml": "^4.1.0"
+    "js-yaml": "^4.1.1"
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",

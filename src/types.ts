@@ -1,16 +1,23 @@
 // Shared type definitions for TheClaw CLI
 
-// ── Component Management (Requirements 1.1) ──────────────────────────────────
+// ── Component Management ──────────────────────────────────────────────────────
 
 export interface ComponentDef {
-  version: string   // target version e.g. "0.5.0"
+  version?: string  // required for registry, not needed for local
   command: string   // executable command name for which detection
-  install: string   // full install command
 }
 
-export interface ComponentsConfig {
-  schema_version: string
+// ── Components Provider ───────────────────────────────────────────────────────
+
+export type ProviderName = 'registry' | 'local'
+
+export interface ComponentProvider {
+  name: ProviderName
   components: Record<string, ComponentDef>
+  /** Install a single component. For local provider, throws if not installed. */
+  install(componentName: string, def: ComponentDef): Promise<void>
+  /** Determine if a component needs to be installed/upgraded given its current installed version. */
+  needsAction(current: string | null, target?: string): boolean
 }
 
 // ── Profile (Requirements 3.1) ────────────────────────────────────────────────
@@ -25,13 +32,12 @@ export interface Profile {
   steps: ProfileStep[]
 }
 
-// ── TheClaw Config (Requirements 7.4) ─────────────────────────────────────────
+// ── TheClaw Config ────────────────────────────────────────────────────────────
 
 export interface TheClawConfig {
   schema_version: string          // "1"
   profile: string
   setup_completed_at?: string     // ISO 8601
-  components_yaml_path: string
   completed_steps?: string[]
 }
 

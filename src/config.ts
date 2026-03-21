@@ -25,7 +25,6 @@ export async function readConfig(configPath?: string): Promise<TheClawConfig> {
       return {
         schema_version: '1',
         profile: 'standard',
-        components_yaml_path: join(getTheClawHome(), 'components.yaml'),
         completed_steps: [],
       }
     }

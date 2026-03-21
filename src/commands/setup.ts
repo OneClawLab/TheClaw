@@ -1,7 +1,9 @@
 import { input } from '@inquirer/prompts'
 import type { TheClawConfig } from '../types.js'
 import { readConfig, writeConfig } from '../config.js'
-import { loadComponents, checkAll, installComponent } from '../component-manager.js'
+import { checkAll, installComponent } from '../component-manager.js'
+import { getProvider } from '../components.js'
+import type { ProviderName } from '../types.js'
 import { loadProfile, extractPlaceholders, fillPlaceholders } from '../profile-loader.js'
 import { execShell } from '../repo-utils/os.js'
 import { join, dirname } from 'path'
@@ -26,6 +28,7 @@ export type SetupStep = typeof SETUP_STEPS[number]
 export interface SetupOptions {
   profile: string
   reset?: boolean
+  provider?: ProviderName
   configPath?: string
 }
 
@@ -50,14 +53,13 @@ export function markStepComplete(step: string, config: TheClawConfig): TheClawCo
 
 // ── Step implementations ──────────────────────────────────────────────────────
 
-export async function installComponents(config: TheClawConfig): Promise<void> {
-  const componentsConfig = await loadComponents(config.components_yaml_path)
-  const statuses = await checkAll(componentsConfig)
+export async function installComponents(_config: TheClawConfig, provider = getProvider('registry')): Promise<void> {
+  const statuses = await checkAll(provider)
   for (const status of statuses) {
     if (!status.installed || status.needsUpgrade) {
       console.log(`Installing ${status.name}...`)
-      const comp = componentsConfig.components[status.name]!
-      await installComponent(comp)
+      const comp = provider.components[status.name]!
+      await installComponent(status.name, comp, provider)
       console.log(`  ✓ ${status.name} installed`)
     } else {
       console.log(`  ✓ ${status.name} already up to date (${status.currentVersion})`)
@@ -140,6 +142,7 @@ export async function smokeTest(): Promise<void> {
 
 export async function runSetup(options: SetupOptions): Promise<void> {
   let config = await readConfig(options.configPath)
+  const provider = getProvider(options.provider ?? 'registry')
 
   if (options.reset) {
     config = { ...config, completed_steps: [
@@ -160,7 +163,7 @@ export async function runSetup(options: SetupOptions): Promise<void> {
 
     switch (step) {
       case 'install-components':
-        await installComponents(config)
+        await installComponents(config, provider)
         break
       case 'load-profile':
         await loadAndFillProfile(options.profile, ctx)
