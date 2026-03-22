@@ -36,6 +36,7 @@ export interface SetupOptions {
 export interface SetupContext {
   filledProfileContent?: string
   placeholderValues?: Record<string, string>
+  profileAgents?: string[]
 }
 
 export function shouldSkipStep(step: string, config: TheClawConfig): boolean {
@@ -72,7 +73,6 @@ export async function loadAndFillProfile(
   ctx: SetupContext,
 ): Promise<void> {
   const profile = await loadProfile(profileNameOrPath, PROFILES_DIR)
-  // Serialize profile back to string for placeholder extraction
   const profileStr = JSON.stringify(profile)
   const placeholders = extractPlaceholders(profileStr)
 
@@ -84,6 +84,12 @@ export async function loadAndFillProfile(
 
   ctx.filledProfileContent = fillPlaceholders(profileStr, values)
   ctx.placeholderValues = values
+
+  // Extract agents list from profile steps
+  const initStep = profile.steps.find(s => s.type === 'init-agents')
+  if (initStep && Array.isArray(initStep['agents'])) {
+    ctx.profileAgents = initStep['agents'] as string[]
+  }
 }
 
 export async function configurePai(ctx: SetupContext): Promise<void> {
@@ -96,11 +102,16 @@ export async function configurePai(ctx: SetupContext): Promise<void> {
   await execShell(`pai model config --model ${model}`)
 }
 
-export async function initAgents(): Promise<void> {
-  const agents = ['admin', 'warden', 'maintainer', 'evolver']
+export async function initAgents(ctx: SetupContext): Promise<void> {
+  const agents = ctx.profileAgents ?? ['admin', 'warden', 'maintainer', 'evolver']
   for (const id of agents) {
-    console.log(`  Initializing agent: ${id}`)
-    await execShell(`agent init ${id}`)
+    try {
+      await execShell(`agent status ${id}`)
+      console.log(`  Skipping agent: ${id} (already exists)`)
+    } catch {
+      console.log(`  Initializing agent: ${id}`)
+      await execShell(`agent init ${id}`)
+    }
   }
 }
 
@@ -122,12 +133,17 @@ export async function startAgents(): Promise<void> {
   }
 }
 
-export async function smokeTest(): Promise<void> {
-  const checks = [
+export async function smokeTest(ctx: SetupContext): Promise<void> {
+  const checks: Array<{ name: string; cmd: string }> = [
     { name: 'notifier', cmd: 'notifier status' },
-    { name: 'xgw', cmd: 'xgw status' },
-    { name: 'agent admin', cmd: 'agent status admin' },
   ]
+
+  if (ctx.profileAgents && ctx.profileAgents.length > 0) {
+    for (const id of ctx.profileAgents) {
+      checks.push({ name: `agent ${id}`, cmd: `agent status ${id}` })
+    }
+  }
+
   for (const check of checks) {
     try {
       await execShell(check.cmd)
@@ -145,15 +161,27 @@ export async function runSetup(options: SetupOptions): Promise<void> {
   const provider = getProvider(options.provider ?? 'registry')
 
   if (options.reset) {
-    config = { ...config, completed_steps: [
-] }
+    config = { ...config, completed_steps: [] }
     await writeConfig(config, options.configPath)
     console.log('Reset: cleared completed steps')
   }
 
-  const ctx: SetupContext = {}
+  // Load profile upfront to determine which steps to run
+  const profile = await loadProfile(options.profile, PROFILES_DIR)
+  const profileStepTypes = new Set(profile.steps.map(s => s.type))
+
+  // Extract agents list from profile upfront (not dependent on load-profile step)
+  const initStep = profile.steps.find(s => s.type === 'init-agents')
+  const ctx: SetupContext = {
+    profileAgents: (Array.isArray(initStep?.['agents']) ? initStep['agents'] : undefined) as string[] | undefined,
+  }
 
   for (const step of SETUP_STEPS) {
+    // Skip steps not in this profile
+    if (!profileStepTypes.has(step) && step !== 'load-profile') {
+      continue
+    }
+
     if (shouldSkipStep(step, config)) {
       console.log(`Skipping step: ${step} (already completed)`)
       continue
@@ -172,7 +200,7 @@ export async function runSetup(options: SetupOptions): Promise<void> {
         await configurePai(ctx)
         break
       case 'init-agents':
-        await initAgents()
+        await initAgents(ctx)
         break
       case 'start-notifier':
         await startNotifier()
@@ -184,7 +212,7 @@ export async function runSetup(options: SetupOptions): Promise<void> {
         await startAgents()
         break
       case 'smoke-test':
-        await smokeTest()
+        await smokeTest(ctx)
         break
     }
 
