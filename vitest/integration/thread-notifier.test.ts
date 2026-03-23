@@ -2,7 +2,7 @@
  * Cross-repo integration tests: thread ↔ notifier
  *
  * Tests the link between thread push and notifier scheduling.
- * Mocks node:child_process execFile to capture notifier CLI calls.
+ * Mocks execCommand from repo-utils/os to capture notifier CLI calls.
  * Uses real SQLite (tmpdir isolation).
  *
  * Validates: Requirements 5.1, 5.2, 5.3, 5.4
@@ -12,19 +12,19 @@ import * as fs from 'node:fs'
 import * as os from 'node:os'
 import * as nodePath from 'node:path'
 
-// ── Mock node:child_process before any imports that use it ───────────────────
-// notifier-client.ts uses execFile from node:child_process directly
-// Use vi.hoisted so mockExecFile is available when the factory runs (vi.mock is hoisted)
+// ── Mock repo-utils/os before any imports that use it ────────────────────────
+// notifier-client.ts uses execCommand from repo-utils/os.js
+// Use vi.hoisted so mockExecCommand is available when the factory runs
 
-const { mockExecFile } = vi.hoisted(() => ({
-  mockExecFile: vi.fn(),
+const { mockExecCommand } = vi.hoisted(() => ({
+  mockExecCommand: vi.fn(),
 }))
 
-vi.mock('node:child_process', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('node:child_process')>()
+vi.mock('../../../thread/src/repo-utils/os.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../thread/src/repo-utils/os.js')>()
   return {
     ...actual,
-    execFile: mockExecFile,
+    execCommand: mockExecCommand,
   }
 })
 
@@ -67,12 +67,8 @@ beforeEach(() => {
   thread = createTestThread()
   vi.clearAllMocks()
 
-  // Default: execFile succeeds (notifier available)
-  mockExecFile.mockImplementation(
-    (_cmd: string, _args: string[], _opts: unknown, callback: (err: null, result: { stdout: string; stderr: string }) => void) => {
-      callback(null, { stdout: '', stderr: '' })
-    }
-  )
+  // Default: execCommand succeeds (notifier available)
+  mockExecCommand.mockResolvedValue({ stdout: '', stderr: '' })
 })
 
 afterEach(() => {
@@ -82,11 +78,11 @@ afterEach(() => {
 // ── Requirement 5.1: push triggers notifier task add ─────────────────────────
 
 describe('Requirement 5.1 — push triggers notifier task add', () => {
-  it('scheduleDispatch calls execFile with notifier and task add args', async () => {
+  it('scheduleDispatch calls execCommand with notifier and task add args', async () => {
     await scheduleDispatch(thread.dir, 'agent-1')
 
-    expect(mockExecFile).toHaveBeenCalledOnce()
-    const [cmd, args] = mockExecFile.mock.calls[0] as [string, string[], ...unknown[]]
+    expect(mockExecCommand).toHaveBeenCalledOnce()
+    const [cmd, args] = mockExecCommand.mock.calls[0] as [string, string[], ...unknown[]]
     expect(cmd).toBe('notifier')
     expect(args).toContain('task')
     expect(args).toContain('add')
@@ -95,7 +91,7 @@ describe('Requirement 5.1 — push triggers notifier task add', () => {
   it('scheduleDispatch passes --author with the source value', async () => {
     await scheduleDispatch(thread.dir, 'my-source')
 
-    const [, args] = mockExecFile.mock.calls[0] as [string, string[], ...unknown[]]
+    const [, args] = mockExecCommand.mock.calls[0] as [string, string[], ...unknown[]]
     const authorIdx = args.indexOf('--author')
     expect(authorIdx).toBeGreaterThanOrEqual(0)
     expect(args[authorIdx + 1]).toBe('my-source')
@@ -104,7 +100,7 @@ describe('Requirement 5.1 — push triggers notifier task add', () => {
   it('scheduleDispatch passes --command containing thread dispatch', async () => {
     await scheduleDispatch(thread.dir, 'agent-1')
 
-    const [, args] = mockExecFile.mock.calls[0] as [string, string[], ...unknown[]]
+    const [, args] = mockExecCommand.mock.calls[0] as [string, string[], ...unknown[]]
     const cmdIdx = args.indexOf('--command')
     expect(cmdIdx).toBeGreaterThanOrEqual(0)
     expect(args[cmdIdx + 1]).toContain('thread dispatch')
@@ -135,7 +131,7 @@ describe('Requirement 5.2 — task-id encodes threadDir path', () => {
   it('scheduleDispatch passes --task-id containing path encoding', async () => {
     await scheduleDispatch(thread.dir, 'agent-1')
 
-    const [, args] = mockExecFile.mock.calls[0] as [string, string[], ...unknown[]]
+    const [, args] = mockExecCommand.mock.calls[0] as [string, string[], ...unknown[]]
     const taskIdIdx = args.indexOf('--task-id')
     expect(taskIdIdx).toBeGreaterThanOrEqual(0)
 
@@ -147,7 +143,7 @@ describe('Requirement 5.2 — task-id encodes threadDir path', () => {
     await scheduleDispatch(thread.dir, 'src-a')
     await scheduleDispatch(thread.dir, 'src-b')
 
-    const calls = mockExecFile.mock.calls as [string, string[], ...unknown[]][]
+    const calls = mockExecCommand.mock.calls as [string, string[], ...unknown[]][]
     const taskId1 = (calls[0]![1] as string[])[((calls[0]![1] as string[]).indexOf('--task-id')) + 1]
     const taskId2 = (calls[1]![1] as string[])[((calls[1]![1] as string[]).indexOf('--task-id')) + 1]
     expect(taskId1).toBe(taskId2)
@@ -157,27 +153,15 @@ describe('Requirement 5.2 — task-id encodes threadDir path', () => {
 // ── Requirement 5.3: notifier unavailable — push still succeeds ───────────────
 
 describe('Requirement 5.3 — notifier unavailable does not fail push', () => {
-  it('scheduleDispatch does not throw when execFile throws (notifier not found)', async () => {
-    mockExecFile.mockImplementation(
-      (_cmd: string, _args: string[], _opts: unknown, callback: (err: Error) => void) => {
-        const err = new Error('notifier: command not found') as Error & { code?: number }
-        err.code = 127
-        callback(err)
-      }
-    )
+  it('scheduleDispatch does not throw when execCommand throws (notifier not found)', async () => {
+    mockExecCommand.mockRejectedValue(new Error('notifier: command not found'))
 
     // Must not throw
     await expect(scheduleDispatch(thread.dir, 'agent-1')).resolves.toBeUndefined()
   })
 
   it('event is written to SQLite even when notifier is unavailable', async () => {
-    mockExecFile.mockImplementation(
-      (_cmd: string, _args: string[], _opts: unknown, callback: (err: Error) => void) => {
-        const err = new Error('notifier: command not found') as Error & { code?: number }
-        err.code = 127
-        callback(err)
-      }
-    )
+    mockExecCommand.mockRejectedValue(new Error('notifier: command not found'))
 
     const db = openDb(thread.dir)
     try {
@@ -190,11 +174,7 @@ describe('Requirement 5.3 — notifier unavailable does not fail push', () => {
   })
 
   it('multiple events persist to SQLite regardless of notifier availability', async () => {
-    mockExecFile.mockImplementation(
-      (_cmd: string, _args: string[], _opts: unknown, callback: (err: Error) => void) => {
-        callback(new Error('notifier unavailable'))
-      }
-    )
+    mockExecCommand.mockRejectedValue(new Error('notifier unavailable'))
 
     const db = openDb(thread.dir)
     try {
@@ -211,27 +191,15 @@ describe('Requirement 5.3 — notifier unavailable does not fail push', () => {
 // ── Requirement 5.4: scheduleDispatch with exit code 1 does not throw ─────────
 
 describe('Requirement 5.4 — exit code 1 (task already exists) does not throw', () => {
-  it('scheduleDispatch resolves when execFile returns exit code 1', async () => {
-    mockExecFile.mockImplementation(
-      (_cmd: string, _args: string[], _opts: unknown, callback: (err: Error & { code?: number }) => void) => {
-        const err = new Error('Command failed') as Error & { code?: number }
-        err.code = 1
-        callback(err)
-      }
-    )
+  it('scheduleDispatch resolves when execCommand returns exit code 1', async () => {
+    mockExecCommand.mockRejectedValue(new Error('notifier exited with code 1: task already exists'))
 
     await expect(scheduleDispatch(thread.dir, 'agent-1')).resolves.toBeUndefined()
   })
 
   it('scheduleDispatch does not propagate exit code 1 error', async () => {
     let threw = false
-    mockExecFile.mockImplementation(
-      (_cmd: string, _args: string[], _opts: unknown, callback: (err: Error & { code?: number }) => void) => {
-        const err = new Error('task already exists') as Error & { code?: number }
-        err.code = 1
-        callback(err)
-      }
-    )
+    mockExecCommand.mockRejectedValue(new Error('notifier exited with code 1: task already exists'))
 
     try {
       await scheduleDispatch(thread.dir, 'agent-1')
