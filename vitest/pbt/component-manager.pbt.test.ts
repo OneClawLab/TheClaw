@@ -24,8 +24,8 @@ describe('component-manager', () => {
       fc.property(
         semverCoreArb,
         fc.boolean(), // whether to add 'v' prefix
-        fc.string({ minLength: 0, maxLength: 30 }).filter((s) => !s.includes('\n') && !/\d$/.test(s)), // prefix text (must not end with digit)
-        fc.string({ minLength: 0, maxLength: 30 }).filter((s) => !s.includes('\n') && !/^\d/.test(s)), // suffix text (must not start with digit)
+        fc.string({ minLength: 0, maxLength: 30 }).filter((s) => !s.includes('\n') && !/[\d.]$/.test(s)), // prefix text (must not end with digit or dot)
+        fc.string({ minLength: 0, maxLength: 30 }).filter((s) => !s.includes('\n') && !/^[\d.]/.test(s)), // suffix text (must not start with digit or dot)
         fc.array(fc.string({ minLength: 0, maxLength: 30 }).filter((s) => !s.includes('\n')), { minLength: 0, maxLength: 3 }), // extra lines
         (semver, addV, prefix, suffix, extraLines) => {
           const versionStr = addV ? `v${semver}` : semver
