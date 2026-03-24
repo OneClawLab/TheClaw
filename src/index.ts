@@ -4,15 +4,15 @@ import { aggregateStatus, formatStatusText, formatStatusJson } from './commands/
 import { runUpgrade } from './commands/upgrade.js'
 import { CliError } from './profile-loader.js'
 import type { ProviderName } from './types.js'
-import { readFileSync } from 'fs'
-import { join, dirname } from 'path'
+import { readFileSync } from './repo-utils/fs.js'
+import { path } from './repo-utils/path.js'
 import { fileURLToPath } from 'url'
 
 process.stdout.on('error', (err) => { if ((err as NodeJS.ErrnoException).code === 'EPIPE') process.exit(0); throw err })
 process.stderr.on('error', (err) => { if ((err as NodeJS.ErrnoException).code === 'EPIPE') process.exit(0); throw err })
 
-const __dirname = dirname(fileURLToPath(import.meta.url))
-const pkg = JSON.parse(readFileSync(join(__dirname, '..', 'package.json'), 'utf-8')) as { version: string }
+const __dirname = path.dirname(path.toPosixPath(fileURLToPath(import.meta.url)))
+const pkg = JSON.parse(readFileSync(path.join(__dirname, '..', 'package.json'), 'utf-8')) as { version: string }
 
 const VALID_PROVIDERS: ProviderName[] = ['registry', 'local']
 

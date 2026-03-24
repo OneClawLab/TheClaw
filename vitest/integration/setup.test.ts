@@ -4,10 +4,9 @@
  * Mocks only external shell commands (execShell/execCommand).
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { mkdtemp, rm, writeFile, readFile, mkdir } from 'fs/promises'
-import { existsSync } from 'fs'
+import { mkdtemp, rm, writeFile, readFile, mkdir, existsSync } from '../../src/repo-utils/fs.js'
 import { path } from '../../src/repo-utils/path.js'
-import { tmpdir } from 'os'
+import { tmpdir } from 'node:os'
 
 // ── Mocks ─────────────────────────────────────────────────────────────────────
 
@@ -43,7 +42,7 @@ import type { TheClawConfig } from '../../src/types.js'
 let tmpDir: string
 
 beforeEach(async () => {
-  tmpDir = await mkdtemp(path.join(tmpdir(), 'theclaw-integration-'))
+  tmpDir = await mkdtemp(path.join(path.toPosixPath(tmpdir()), 'theclaw-integration-'))
   vi.clearAllMocks()
   mockExecShell.mockResolvedValue({ stdout: '', stderr: '' })
   mockCommandExists.mockResolvedValue(false)

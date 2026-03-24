@@ -6,7 +6,6 @@ function makeConfig(completedSteps: string[]) {
   return {
     schema_version: '1' as const,
     profile: 'standard',
-    components_yaml_path: '/tmp/components.yaml',
     completed_steps: completedSteps,
   }
 }

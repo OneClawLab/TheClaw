@@ -1,8 +1,8 @@
 import { describe, test, expect, beforeEach, afterEach } from 'vitest'
 import fc from 'fast-check'
-import { mkdtemp, rm } from 'fs/promises'
-import { tmpdir } from 'os'
-import { join } from 'path'
+import { mkdtemp, rm } from '../../src/repo-utils/fs.js'
+import { tmpdir } from 'node:os'
+import { path } from '../../src/repo-utils/path.js'
 import { readConfig, writeConfig } from '../../src/config.js'
 import type { TheClawConfig } from '../../src/types.js'
 
@@ -11,7 +11,6 @@ const theClawConfigArb: fc.Arbitrary<TheClawConfig> = fc.record({
   schema_version: fc.constantFrom('1'),
   profile: fc.string({ minLength: 1, maxLength: 50 }).filter(s => /^[a-z0-9-]+$/.test(s)),
   setup_completed_at: fc.option(fc.date().map(d => d.toISOString()), { nil: undefined }),
-  components_yaml_path: fc.string({ minLength: 1, maxLength: 200 }),
   completed_steps: fc.option(fc.array(fc.string({ minLength: 1, maxLength: 50 })), { nil: undefined }),
 })
 
@@ -19,7 +18,7 @@ describe('config', () => {
   let tmpDir: string
 
   beforeEach(async () => {
-    tmpDir = await mkdtemp(join(tmpdir(), 'theclaw-test-'))
+    tmpDir = await mkdtemp(path.join(path.toPosixPath(tmpdir()), 'theclaw-test-'))
   })
 
   afterEach(async () => {
@@ -31,13 +30,12 @@ describe('config', () => {
     let i = 0
     await fc.assert(
       fc.asyncProperty(theClawConfigArb, async (config) => {
-        const tmpPath = join(tmpDir, `config-${i++}.json`)
+        const tmpPath = path.join(tmpDir, `config-${i++}.json`)
         await writeConfig(config, tmpPath)
         const result = await readConfig(tmpPath)
         // Verify all fields match
         expect(result.schema_version).toBe(config.schema_version)
         expect(result.profile).toBe(config.profile)
-        expect(result.components_yaml_path).toBe(config.components_yaml_path)
         if (config.setup_completed_at !== undefined) {
           expect(result.setup_completed_at).toBe(config.setup_completed_at)
         }

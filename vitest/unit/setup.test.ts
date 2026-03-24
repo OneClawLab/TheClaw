@@ -6,7 +6,6 @@ function makeConfig(completedSteps: string[]): TheClawConfig {
   return {
     schema_version: '1',
     profile: 'standard',
-    components_yaml_path: '/tmp/components.yaml',
     completed_steps: completedSteps,
   }
 }
@@ -30,7 +29,6 @@ describe('shouldSkipStep', () => {
     const config: TheClawConfig = {
       schema_version: '1',
       profile: 'standard',
-      components_yaml_path: '/tmp/components.yaml',
     }
     expect(shouldSkipStep('install-components', config)).toBe(false)
   })

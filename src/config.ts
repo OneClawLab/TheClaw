@@ -1,23 +1,23 @@
-import { readFile, writeFile, mkdir } from 'fs/promises'
-import { dirname, join } from 'path'
-import { homedir } from 'os'
+import { readFile, writeFile, mkdir } from './repo-utils/fs.js'
+import { path } from './repo-utils/path.js'
+import { homedir } from 'node:os'
 import type { TheClawConfig } from './types.js'
 
 function getConfigPath(configPath?: string): string {
   if (configPath) return configPath
   if (process.env.THECLAW_CONFIG) return process.env.THECLAW_CONFIG
-  const home = homedir()
-  return join(home, '.config', 'theclaw', 'config.json')
+  const home = path.toPosixPath(homedir())
+  return path.join(home, '.config', 'theclaw', 'config.json')
 }
 
 export function getTheClawHome(): string {
-  return process.env.THECLAW_HOME ?? join(homedir(), '.theclaw')
+  return process.env.THECLAW_HOME ?? path.join(path.toPosixPath(homedir()), '.theclaw')
 }
 
 export async function readConfig(configPath?: string): Promise<TheClawConfig> {
-  const path = getConfigPath(configPath)
+  const filePath = getConfigPath(configPath)
   try {
-    const content = await readFile(path, 'utf-8')
+    const content = await readFile(filePath, 'utf-8')
     return JSON.parse(content) as TheClawConfig
   } catch (err: unknown) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
@@ -33,7 +33,7 @@ export async function readConfig(configPath?: string): Promise<TheClawConfig> {
 }
 
 export async function writeConfig(config: TheClawConfig, configPath?: string): Promise<void> {
-  const path = getConfigPath(configPath)
-  await mkdir(dirname(path), { recursive: true })
-  await writeFile(path, JSON.stringify(config, null, 2), 'utf-8')
+  const filePath = getConfigPath(configPath)
+  await mkdir(path.dirname(filePath), { recursive: true })
+  await writeFile(filePath, JSON.stringify(config, null, 2), 'utf-8')
 }

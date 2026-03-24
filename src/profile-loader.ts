@@ -1,5 +1,5 @@
-import { readFile } from 'fs/promises'
-import { join } from 'path'
+import { readFile } from './repo-utils/fs.js'
+import { path } from './repo-utils/path.js'
 import yaml from 'js-yaml'
 import type { Profile } from './types.js'
 
@@ -35,7 +35,7 @@ export function fillPlaceholders(content: string, values: Record<string, string>
 
 export async function loadProfile(nameOrPath: string, profilesDir: string): Promise<Profile> {
   const isPath = nameOrPath.includes('/') || nameOrPath.includes('\\') || nameOrPath.endsWith('.yaml')
-  const filePath = isPath ? nameOrPath : join(profilesDir, `${nameOrPath}.yaml`)
+  const filePath = isPath ? nameOrPath : path.join(profilesDir, `${nameOrPath}.yaml`)
 
   let content: string
   try {

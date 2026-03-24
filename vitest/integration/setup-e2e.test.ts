@@ -10,9 +10,9 @@
  * Validates: Requirements 8.1, 8.2, 8.3, 8.4, 8.5
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import { mkdtemp, rm, writeFile } from 'fs/promises'
+import { mkdtemp, rm, writeFile } from '../../src/repo-utils/fs.js'
 import { path } from '../../src/repo-utils/path.js'
-import { tmpdir } from 'os'
+import { tmpdir } from 'node:os'
 
 // ── Mocks ─────────────────────────────────────────────────────────────────────
 
@@ -46,7 +46,7 @@ let tmpDir: string
 let consoleSpy: ReturnType<typeof vi.spyOn>
 
 beforeEach(async () => {
-  tmpDir = await mkdtemp(path.join(tmpdir(), 'theclaw-e2e-'))
+  tmpDir = await mkdtemp(path.join(path.toPosixPath(tmpdir()), 'theclaw-e2e-'))
   vi.clearAllMocks()
   mockExecShell.mockResolvedValue({ stdout: '', stderr: '' })
   consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {})

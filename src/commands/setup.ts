@@ -6,11 +6,11 @@ import { getProvider } from '../components.js'
 import type { ProviderName } from '../types.js'
 import { loadProfile, extractPlaceholders, fillPlaceholders } from '../profile-loader.js'
 import { execShell } from '../repo-utils/os.js'
-import { join, dirname } from 'path'
+import { path } from '../repo-utils/path.js'
 import { fileURLToPath } from 'url'
 
-const __dirname = dirname(fileURLToPath(import.meta.url))
-const PROFILES_DIR = join(__dirname, '..', '..', 'profiles')
+const __dirname = path.dirname(path.toPosixPath(fileURLToPath(import.meta.url)))
+const PROFILES_DIR = path.join(__dirname, '..', '..', 'profiles')
 
 export const SETUP_STEPS = [
   'install-components',
