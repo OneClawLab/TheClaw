@@ -94,23 +94,44 @@ export async function loadAndFillProfile(
 
 export async function configurePai(ctx: SetupContext): Promise<void> {
   const model = ctx.placeholderValues?.['PAI_MODEL']
+  const apiKey = ctx.placeholderValues?.['PAI_API_KEY']
+
   if (!model) {
     console.log('  No PAI_MODEL found in profile, skipping pai model config')
     return
   }
-  console.log(`  Configuring pai model: ${model}`)
-  await execShell(`pai model config --model ${model}`)
+
+  // Derive provider name from model (e.g. "gpt-4o" → "openai", "claude-3-5-sonnet" → "anthropic")
+  // Fall back to a generic name if we can't detect
+  const providerName = deriveProviderName(model)
+
+  if (apiKey) {
+    console.log(`  Configuring pai provider: ${providerName} (model: ${model})`)
+    await execShell(`pai model config --add --name ${providerName} --provider ${providerName} --set apiKey=${apiKey} --default`)
+  } else {
+    console.log(`  Configuring pai default model: ${model} (no API key provided)`)
+    await execShell(`pai model default --name ${providerName}`)
+  }
+}
+
+function deriveProviderName(model: string): string {
+  if (model.startsWith('gpt-') || model.startsWith('o1') || model.startsWith('o3')) return 'openai'
+  if (model.startsWith('claude-')) return 'anthropic'
+  if (model.startsWith('gemini-')) return 'google'
+  if (model.startsWith('llama') || model.startsWith('mistral')) return 'ollama'
+  // Default: use model name as provider name
+  return model.split('-')[0] ?? model
 }
 
 export async function initAgents(ctx: SetupContext): Promise<void> {
   const agents = ctx.profileAgents ?? ['admin', 'warden', 'maintainer', 'evolver']
   for (const id of agents) {
     try {
-      await execShell(`agent status ${id}`)
+      await execShell(`xar status ${id}`)
       console.log(`  Skipping agent: ${id} (already exists)`)
     } catch {
       console.log(`  Initializing agent: ${id}`)
-      await execShell(`agent init ${id}`)
+      await execShell(`xar init ${id}`)
     }
   }
 }
@@ -120,27 +141,34 @@ export async function startNotifier(): Promise<void> {
   await execShell('notifier start')
 }
 
-export async function configureXgw(): Promise<void> {
+export async function configureXgw(ctx: SetupContext): Promise<void> {
+  const port = ctx.placeholderValues?.['XGW_PORT']
+  if (port) {
+    console.log(`  Configuring xgw port: ${port}`)
+    // Write xgw config with the specified port before starting
+    await execShell(`xgw channel add --type tui --port ${port} --id tui-main || true`)
+  }
   console.log('  Starting xgw...')
   await execShell('xgw start')
 }
 
-export async function startAgents(): Promise<void> {
-  const agents = ['admin', 'warden', 'maintainer', 'evolver']
+export async function startAgents(ctx: SetupContext): Promise<void> {
+  const agents = ctx.profileAgents ?? ['admin', 'warden', 'maintainer', 'evolver']
   for (const id of agents) {
     console.log(`  Starting agent: ${id}`)
-    await execShell(`agent start ${id}`)
+    await execShell(`xar start ${id}`)
   }
 }
 
 export async function smokeTest(ctx: SetupContext): Promise<void> {
   const checks: Array<{ name: string; cmd: string }> = [
     { name: 'notifier', cmd: 'notifier status' },
+    { name: 'xgw', cmd: 'xgw status' },
   ]
 
   if (ctx.profileAgents && ctx.profileAgents.length > 0) {
     for (const id of ctx.profileAgents) {
-      checks.push({ name: `agent ${id}`, cmd: `agent status ${id}` })
+      checks.push({ name: `agent ${id}`, cmd: `xar status ${id}` })
     }
   }
 
@@ -206,10 +234,10 @@ export async function runSetup(options: SetupOptions): Promise<void> {
         await startNotifier()
         break
       case 'configure-xgw':
-        await configureXgw()
+        await configureXgw(ctx)
         break
       case 'start-agents':
-        await startAgents()
+        await startAgents(ctx)
         break
       case 'smoke-test':
         await smokeTest(ctx)

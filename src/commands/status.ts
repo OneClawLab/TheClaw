@@ -19,10 +19,10 @@ export async function aggregateStatus(options: StatusOptions): Promise<StatusRes
   const [notifierRaw, xgwRaw, ...agentRaws] = await Promise.all([
     fetchComponentStatus('notifier', 'notifier status --json'),
     fetchComponentStatus('xgw', 'xgw status --json'),
-    fetchComponentStatus('agent-admin', 'agent status admin --json'),
-    fetchComponentStatus('agent-warden', 'agent status warden --json'),
-    fetchComponentStatus('agent-maintainer', 'agent status maintainer --json'),
-    fetchComponentStatus('agent-evolver', 'agent status evolver --json'),
+    fetchComponentStatus('agent-admin', 'xar status admin --json'),
+    fetchComponentStatus('agent-warden', 'xar status warden --json'),
+    fetchComponentStatus('agent-maintainer', 'xar status maintainer --json'),
+    fetchComponentStatus('agent-evolver', 'xar status evolver --json'),
   ])
 
   // Parse notifier status

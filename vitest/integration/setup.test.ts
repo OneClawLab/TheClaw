@@ -253,25 +253,41 @@ describe('shouldSkipStep / markStepComplete: with real config persistence', () =
 
 describe('smokeTest', () => {
   it('calls notifier status check', async () => {
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
     await smokeTest({})
     expect(mockExecShell).toHaveBeenCalledWith('notifier status')
+    consoleSpy.mockRestore()
+  })
+
+  it('calls xgw status check', async () => {
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+    await smokeTest({})
+    expect(mockExecShell).toHaveBeenCalledWith('xgw status')
+    consoleSpy.mockRestore()
   })
 
   it('calls agent status for each profile agent', async () => {
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
     await smokeTest({ profileAgents: ['alpha', 'beta'] })
-    expect(mockExecShell).toHaveBeenCalledWith('agent status alpha')
-    expect(mockExecShell).toHaveBeenCalledWith('agent status beta')
+    expect(mockExecShell).toHaveBeenCalledWith('xar status alpha')
+    expect(mockExecShell).toHaveBeenCalledWith('xar status beta')
+    consoleSpy.mockRestore()
   })
 
   it('throws when a smoke test check fails', async () => {
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
     mockExecShell.mockRejectedValueOnce(new Error('notifier not running'))
     await expect(smokeTest({})).rejects.toThrow(/smoke test failed/i)
+    consoleSpy.mockRestore()
   })
 
   it('includes failing service name in error message', async () => {
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
     mockExecShell.mockResolvedValueOnce({ stdout: '', stderr: '' }) // notifier ok
+    mockExecShell.mockResolvedValueOnce({ stdout: '', stderr: '' }) // xgw ok
     mockExecShell.mockRejectedValueOnce(new Error('not running'))   // agent alpha fails
     await expect(smokeTest({ profileAgents: ['alpha'] })).rejects.toThrow(/alpha/)
+    consoleSpy.mockRestore()
   })
 })
 
@@ -279,6 +295,7 @@ describe('smokeTest', () => {
 
 describe('initAgents', () => {
   it('initializes default agents when no profileAgents set', async () => {
+    const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
     // agent status throws for each agent → triggers agent init for each
     // Use mockRejectedValueOnce per status call, then resolve for init calls
     mockExecShell
@@ -291,15 +308,16 @@ describe('initAgents', () => {
       .mockRejectedValueOnce(new Error('not found')) // status evolver
       .mockResolvedValueOnce({ stdout: '', stderr: '' }) // init evolver
     await initAgents({})
-    const initCalls = mockExecShell.mock.calls.filter(([cmd]) => (cmd as string).startsWith('agent init'))
+    const initCalls = mockExecShell.mock.calls.filter(([cmd]) => (cmd as string).startsWith('xar init'))
     expect(initCalls.length).toBeGreaterThan(0)
+    consoleSpy.mockRestore()
   })
 
   it('skips agents that already exist (status succeeds)', async () => {
     mockExecShell.mockResolvedValue({ stdout: '', stderr: '' }) // all agents exist
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
     await initAgents({ profileAgents: ['alpha', 'beta'] })
-    const initCalls = mockExecShell.mock.calls.filter(([cmd]) => (cmd as string).startsWith('agent init'))
+    const initCalls = mockExecShell.mock.calls.filter(([cmd]) => (cmd as string).startsWith('xar init'))
     expect(initCalls).toHaveLength(0)
     consoleSpy.mockRestore()
   })
@@ -314,9 +332,9 @@ describe('initAgents', () => {
     const consoleSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
     await initAgents({ profileAgents: ['alpha', 'beta'] })
 
-    const initCalls = mockExecShell.mock.calls.filter(([cmd]) => (cmd as string).startsWith('agent init'))
+    const initCalls = mockExecShell.mock.calls.filter(([cmd]) => (cmd as string).startsWith('xar init'))
     expect(initCalls).toHaveLength(1)
-    expect(initCalls[0]![0]).toBe('agent init beta')
+    expect(initCalls[0]![0]).toBe('xar init beta')
     consoleSpy.mockRestore()
   })
 })

@@ -11,7 +11,7 @@ const registryComponents: Record<string, ComponentDef> = {
   xweb:     { version: '0.2.0', command: 'xweb' },
   notifier: { version: '0.3.0', command: 'notifier' },
   thread:   { version: '0.3.0', command: 'thread' },
-  agent:    { version: '0.1.0', command: 'agent' },
+  xar:      { version: '2.0.0', command: 'xar' },
   xgw:      { version: '0.1.0', command: 'xgw' },
 }
 
@@ -24,7 +24,7 @@ const localComponents: Record<string, ComponentDef> = {
   xweb:     { command: 'xweb' },
   notifier: { command: 'notifier' },
   thread:   { command: 'thread' },
-  agent:    { command: 'agent' },
+  xar:      { command: 'xar' },
   xgw:      { command: 'xgw' },
 }
 

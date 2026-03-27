@@ -211,9 +211,9 @@ describe('Requirement 8.4 — profile steps are parsed and executed', () => {
 
     await runSetup({ profile: profilePath, configPath: configPath() })
 
-    // init-agents would call execShell('agent init ...') — should not happen
+    // init-agents would call execShell('xar init ...') — should not happen
     const agentInitCalls = mockExecShell.mock.calls.filter(
-      ([cmd]) => typeof cmd === 'string' && cmd.startsWith('agent init')
+      ([cmd]) => typeof cmd === 'string' && cmd.startsWith('xar init')
     )
     expect(agentInitCalls).toHaveLength(0)
   })
@@ -235,7 +235,7 @@ describe('Requirement 8.4 — profile steps are parsed and executed', () => {
     await runSetup({ profile: profilePath, configPath: configPath() })
 
     const agentInitCalls = mockExecShell.mock.calls.filter(
-      ([cmd]) => typeof cmd === 'string' && cmd.startsWith('agent init')
+      ([cmd]) => typeof cmd === 'string' && cmd.startsWith('xar init')
     )
     expect(agentInitCalls.length).toBeGreaterThan(0)
   })
@@ -243,7 +243,7 @@ describe('Requirement 8.4 — profile steps are parsed and executed', () => {
 
 // ── Requirement 8.5: smoke-test step calls notifier status and agent status ───
 
-describe('Requirement 8.5 — smoke-test step calls notifier status and agent status', () => {
+describe('Requirement 8.5 — smoke-test step calls notifier status, xgw status and agent status', () => {
   it('smoke-test calls notifier status', async () => {
     const profilePath = await writeMinimalProfile('smoke-only', ['smoke-test'])
 
@@ -252,19 +252,27 @@ describe('Requirement 8.5 — smoke-test step calls notifier status and agent st
     expect(mockExecShell).toHaveBeenCalledWith('notifier status')
   })
 
+  it('smoke-test calls xgw status', async () => {
+    const profilePath = await writeMinimalProfile('smoke-only', ['smoke-test'])
+
+    await runSetup({ profile: profilePath, configPath: configPath() })
+
+    expect(mockExecShell).toHaveBeenCalledWith('xgw status')
+  })
+
   it('smoke-test calls agent status for each profile agent', async () => {
     const yaml = `name: with-agents\nsteps:\n  - type: init-agents\n    agents: [alpha, beta]\n  - type: smoke-test\n`
     const profilePath = path.join(tmpDir, 'with-agents.yaml')
     await writeFile(profilePath, yaml)
 
     // init-agents: all agents exist (status succeeds)
-    // smoke-test: notifier + agent alpha + agent beta
+    // smoke-test: notifier + xgw + agent alpha + agent beta
     mockExecShell.mockResolvedValue({ stdout: '', stderr: '' })
 
     await runSetup({ profile: profilePath, configPath: configPath() })
 
-    expect(mockExecShell).toHaveBeenCalledWith('agent status alpha')
-    expect(mockExecShell).toHaveBeenCalledWith('agent status beta')
+    expect(mockExecShell).toHaveBeenCalledWith('xar status alpha')
+    expect(mockExecShell).toHaveBeenCalledWith('xar status beta')
   })
 
   it('setup fails when smoke-test detects a service is down', async () => {
