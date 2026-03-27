@@ -15,28 +15,27 @@ TheClaw is a agent runtime that inherits core principles from OpenClaw with seve
 
 NOTE: This is still in very early research and development phase, not ready yet.
 
-# Current Progress: Architecting
+# Architecture
 
-See [TheClawArchitecture.md](arch/TheClawArchitecture.md)。
+See [SPEC.md](./SPEC.md) for complete architecture and design documentation.
 
-**Completed:**
-1. pai: LLM interaction command.
-- Support many providers/models, embedding, chat with basic session support and stream mode. 
-- It's a thin wrapper of @mariozechner/pi-ai.
-2. cmds: command discover command.
-- Natural language search and information for all available commands, backed by tldr-pages data and semantic search via xdb.
-3. xdb: data collection command.
-- Unified interface over LanceDB (vector) and SQLite (relational/FTS), with automatic embedding.
-- Intent-based data collection policy for common scenarios.
-4. xweb: web interaction command.
-- search, fetch, explore, etc. For both humans and LLM agents.
-- support brave/tavily/serper provider, fallback to simple fetch based search with Bing or Google.
-5. notifier: daemon and command for task scheduling.
-
-**Planned:**
-1. thread: thread management command.
-2. agent: agent management command.
-3. xgw: gateway daemon & command.
+**Completed Components:**
+1. **pai** — LLM interaction (CLI/LIB dual interface)
+   - Multiple providers/models, embedding, streaming chat with session support
+2. **cmds** — Command discovery
+   - Natural language search backed by tldr-pages and semantic search via xdb
+3. **xdb** — Data collection and search
+   - Unified interface over LanceDB (vector) and SQLite (relational/FTS)
+4. **xweb** — Web interaction
+   - search, fetch, explore with multiple provider support
+5. **notifier** — Task scheduling daemon
+   - Cron and immediate task scheduling
+6. **thread** — Event stream and message bus (CLI/LIB dual interface)
+   - SQLite-backed persistent event storage with subscription model
+7. **xar** — Agent runtime daemon
+   - In-memory event loop, streaming-capable IPC, agent run-loop
+8. **xgw** — Message gateway daemon
+   - Channel plugins (Telegram, Slack, TUI, etc.), IPC communication with xar
 
 
 # Install

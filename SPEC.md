@@ -1,19 +1,104 @@
-# TheClaw CLI 设计
+# TheClaw: Agent Runtime Platform
 
-theclaw 是系统的组装/配置/观测入口。它不是运行时依赖——setup 完成后各组件独立运行，theclaw 仅在安装、升级、全局状态查看时介入。
+## Vision
+
+TheClaw is an agent runtime platform that inherits core principles from OpenClaw with several improvements:
+
+1. **Loose-coupled system architecture** with composition of CLI commands:
+   - Every system capability is a CLI command
+   - LLM is equipped only one `bash_exec` tool, with progressive discovery of system capabilities via builtin `cmds` CLI command
+
+2. **Event-driven architecture** with Thread (stream of events with artifacts) as first-class citizen:
+   - Supports agent persistent memory and context
+   - Keeps human/agent or agent/agent collaboration consistent and easily manageable
+   - Improves system observability, auditability, recoverability
+
+3. **Streaming-capable runtime** for real-time LLM interactions:
+   - Replaces file-system-based message passing with in-memory/IPC event loops
+   - Enables token-by-token streaming from LLM to client
+   - Maintains CLI as the sole LLM tool interface
 
 ---
 
-## 设计原则
+## Architecture Overview
 
-1. **薄壳层**。theclaw 自身不实现业务逻辑，只编排各组件的 CLI 命令。
-2. **内置 Provider 驱动**。组件版本和安装方式内置在代码中，通过 `--provider` 参数选择，不使用 package.json dependencies 也不依赖外部 components.yaml 文件。
-3. **Profile 驱动初始化**。所有 setup 行为由 profile 文件声明（详见 [BootstrapDesign.md](BootstrapDesign.md)）。
-4. **可观测性优先**。提供一组 status/logs/trace 脚本，让人类和 maintainer agent 都能快速了解系统状态。
+### v1: CLI Orchestration Layer (薄壳层)
+
+TheClaw v1 is a thin orchestration shell that:
+- Manages system initialization and component lifecycle
+- Provides unified status/logs/trace observability
+- Does not implement business logic—only composes CLI commands
+- Uses internal provider model for component installation
+
+**Key Components:**
+- `theclaw setup`: System initialization with profile-driven configuration
+- `theclaw status`: Aggregated system status view
+- `theclaw upgrade`: Component version management
+- Observability scripts: `theclaw-status.sh`, `theclaw-logs.sh`, `theclaw-threads.sh`, `theclaw-trace.sh`, `theclaw-health.sh`
+
+### v2: Streaming-Capable Runtime Architecture
+
+TheClaw v2 upgrades the message flow from file-system-based process orchestration to in-memory/IPC service orchestration:
+
+**v1 Message Path (Process-based):**
+```
+xgw → thread push(CLI) → notifier dispatch(file polling) → agent run(CLI) 
+→ pai chat(CLI) → thread push(CLI) → outbound consumer → agent deliver(CLI) → xgw send(CLI)
+```
+Each arrow = process boundary, 6-8 process launches per message, no streaming possible.
+
+**v2 Message Path (IPC-based):**
+```
+client → xgw(WebSocket) → xar daemon(IPC) → pai lib(streaming LLM) 
+→ xar daemon(IPC) → xgw(WebSocket) → client
+```
+Streaming-capable, in-process or IPC, no batch processing boundaries.
+
+### Component Architecture (v2)
+
+```
+┌─────────────────────────────────────────────────────────┐
+│  LLM 工具层（CLI，给 LLM 的 bash_exec 调用）              │
+│  cmds  xdb  xweb  pai  thread(管理CLI)  agent(管理CLI)   │
+└─────────────────────────────────────────────────────────┘
+         │ bash_exec
+┌────────▼────────────────────────────────────────────────┐
+│  Agent Runtime (xar daemon)                              │
+│  ├── 事件循环（内存，替代 notifier dispatch）              │
+│  ├── Thread 存储（SQLite lib，替代 thread CLI 调用）       │
+│  ├── Agent Run-loop（内存调度，替代 notifier 文件轮询）    │
+│  ├── LLM 调用（pai lib，替代 pai CLI 调用）               │
+│  └── IPC Server（Unix socket / local HTTP+WS）           │
+└────────┬────────────────────────────────────────────────┘
+         │ IPC（streaming-capable）
+┌────────▼────────────────────────────────────────────────┐
+│  xgw daemon                                              │
+│  ├── Channel plugins（telegram, slack, tui, webchat...） │
+│  └── IPC Client（连接 xar）                              │
+└────────┬────────────────────────────────────────────────┘
+         │ WebSocket / Webhook / Polling
+┌────────▼────────────────────────────────────────────────┐
+│  外部渠道 & 客户端                                        │
+│  xgw-tui  webchat  telegram  slack  ...                  │
+└─────────────────────────────────────────────────────────┘
+```
 
 ---
 
-## 包结构
+## Design Principles
+
+1. **Thin orchestration layer**: TheClaw self does not implement business logic, only composes CLI commands
+2. **Internal provider model**: Component versions and installation methods are built into code via `--provider` parameter
+3. **Profile-driven initialization**: All setup behavior declared in profile files
+4. **Observability first**: Comprehensive status/logs/trace scripts for human and maintainer agent visibility
+5. **LLM tool interface is CLI**: All system capabilities exposed as CLI commands, LLM has only `bash_exec` tool
+6. **Agent as directory**: Each agent's data stored in `~/.theclaw/agents/<id>/`, filesystem is ground truth
+7. **Thread as first-class citizen**: Event stream, persistent memory, observability foundation
+8. **Streaming-capable**: Token-by-token LLM output transmission through IPC to client
+
+---
+
+## Package Structure
 
 ```
 TheClaw/
@@ -41,102 +126,52 @@ TheClaw/
 └── SPEC.md
 ```
 
-theclaw 本身也是一个 npm 包（`theclaw` 命令），但它不把其他组件声明为 npm dependencies。组件的版本和安装方式内置在代码中（`src/components.ts`），通过 `--provider` 参数选择。
-
 ---
 
-## Components Provider
-
-"怎么安装"由 provider 决定，内置在 theclaw 代码中。通过 `--provider` 参数选择，默认使用 `registry`。
-
-```bash
-theclaw setup --provider registry   # 默认
-theclaw setup --provider local
-theclaw upgrade --provider local
-```
-
-### 内置 Provider
-
-**`registry`**（默认）
-
-从 npm registry 安装：
-
-```
-npm install -g @theclaw/<name>@<version>
-```
-
-**`local`**
-
-从本地源码构建并 link，依赖环境变量 `THECLAW_SOURCE_ROOT`：
-
-```
-cd ${THECLAW_SOURCE_ROOT}/<name> && npm run build && npm link
-```
-
-版本检测在 local 模式下只做 warning，不强制匹配（开发时版本号不重要）。
-
-### 扩展性
-
-未来新增 provider（如 `brew`、`cargo`、`binary`）只需在代码中添加实现，`components.yaml` 无需改动。
-
----
-
-## CLI 命令
+## CLI Commands
 
 ### `theclaw setup`
 
-系统初始化。详细流程见 [BootstrapDesign.md](BootstrapDesign.md)。
+System initialization. Detailed flow in BootstrapDesign.md.
 
 ```bash
 theclaw setup [--profile <name|path>] [--reset]
 ```
 
-| 参数 | 说明 |
-|------|------|
-| `--profile` | Profile 名称（在 `profiles/` 下查找）或文件路径。默认 `standard` |
-| `--reset` | 清除已有配置重新初始化 |
+| Parameter | Description |
+|-----------|-------------|
+| `--profile` | Profile name (search in `profiles/`) or file path. Default: `standard` |
+| `--reset` | Clear existing config and reinitialize |
 
-**执行摘要**：
+**Execution Summary:**
 
-1. 读取内置 provider 中的组件列表，检测并安装缺失组件
-2. 加载 profile，交互式填充 `${VAR}` 占位符
-3. 配置 pai providers
-4. 初始化 agents（admin → warden → maintainer → evolver）
-5. 启动 notifier daemon
-6. 配置并启动 xgw
-7. 启动 agents（注册 inbox 订阅）
+1. Read component list from built-in provider, detect and install missing components
+2. Load profile, interactively fill `${VAR}` placeholders
+3. Configure pai providers
+4. Initialize agents (admin → warden → maintainer → evolver)
+5. Start notifier daemon
+6. Configure and start xgw
+7. Start agents (register inbox subscriptions)
 8. Smoke test
 
-**幂等性**：重复执行跳过已完成步骤（除非 `--reset`）。详见 BootstrapDesign.md 幂等性规则表。
+**Idempotency**: Repeated execution skips completed steps (unless `--reset`).
 
-**退出码**：`0` 成功，`1` 组件安装失败或配置错误，`2` 参数错误。
-
----
+**Exit codes**: `0` success, `1` component install/config error, `2` argument error.
 
 ### `theclaw status`
 
-聚合各组件状态，给出系统全局视图。
+Aggregate component status, provide system global view.
 
 ```bash
 theclaw status [--json] [--deep]
 ```
 
-| 参数 | 说明 |
-|------|------|
-| `--json` | 结构化 JSON 输出 |
-| `--deep` | 深度检查（探测各组件连通性，而非仅读状态文件） |
+| Parameter | Description |
+|-----------|-------------|
+| `--json` | Structured JSON output |
+| `--deep` | Deep check (probe component connectivity, not just read status files) |
 
-**执行逻辑**：
-
-```bash
-# 对每个组件调用其 status 命令
-notifier status --json
-xgw status --json
-agent status --json        # 列出所有 agent 及其状态
-agent status admin --json  # 各 agent 详情
-```
-
-**默认输出（人类可读）**：
+**Default Output (human-readable):**
 
 ```
 TheClaw Status
@@ -151,93 +186,303 @@ agents:
 ──────────────────────────────────
 ```
 
-**JSON 输出**：
-
-```json
-{
-  "notifier": { "running": true, "pid": 12345 },
-  "xgw": {
-    "running": true,
-    "pid": 12346,
-    "channels": [
-      { "id": "telegram-main", "type": "telegram", "healthy": true }
-    ]
-  },
-  "agents": [
-    {
-      "id": "admin",
-      "kind": "system",
-      "started": true,
-      "inbox_pending": 0,
-      "last_activity": "2026-03-20T10:30:00Z"
-    }
-  ]
-}
-```
-
-**`--deep` 模式**：除了读取状态文件，还主动探测：
-- notifier：写一个 test task 并等待执行
-- xgw：对每个 channel 调用 health check
-- agent：检查 inbox thread 是否可读写
-
----
-
 ### `theclaw upgrade`
 
-升级系统组件。
+Upgrade system components.
 
 ```bash
 theclaw upgrade [--component <name>] [--dry-run]
 ```
 
-| 参数 | 说明 |
-|------|------|
-| `--component` | 只升级指定组件。省略则升级全部 |
-| `--dry-run` | 只显示将要执行的操作，不实际执行 |
+| Parameter | Description |
+|-----------|-------------|
+| `--component` | Upgrade only specified component. Omit to upgrade all |
+| `--dry-run` | Show operations without executing |
 
-**执行逻辑**：
+---
 
-1. 读取内置 provider 中各组件的目标版本
-2. 对每个组件执行 `<command> --version`，比较当前版本与目标版本
-3. 版本不匹配的组件，执行 `install` 字段中的安装命令（npm install -g 会自动升级）
-4. 升级完成后，对受影响的运行中组件执行 graceful restart：
-   - xgw：`xgw stop` → `xgw start`
-   - notifier：`notifier stop` → `notifier start`
-   - agent：无需重启（非常驻进程，下次 dispatch 自动使用新版本）
+## Components Provider
 
-**升级 theclaw 自身**：`components.yaml` 不包含 theclaw 自身。theclaw 的升级通过 `npm install -g theclaw` 手动完成（或由 maintainer agent 执行）。升级后 `components.yaml` 随新版本更新。
+Installation method determined by provider, built into theclaw code. Select via `--provider` parameter, default is `registry`.
 
-**输出**：
-
+```bash
+theclaw setup --provider registry   # default
+theclaw setup --provider local
+theclaw upgrade --provider local
 ```
-Checking components...
-  pai       0.5.0 → 0.5.0  (up to date)
-  notifier  0.2.0 → 0.3.0  (upgrading...)  ✓
-  xgw       0.1.0 → 0.1.0  (up to date)
-  ...
 
-Restarting affected services...
-  notifier  stop → start  ✓
+### Built-in Providers
 
-Upgrade complete.
+**`registry`** (default)
+
+Install from npm registry:
+```
+npm install -g @theclaw/<name>@<version>
+```
+
+**`local`**
+
+Build and link from local source, depends on `THECLAW_SOURCE_ROOT` environment variable:
+```
+cd ${THECLAW_SOURCE_ROOT}/<name> && npm run build && npm link
 ```
 
 ---
 
-## 配置数据边界
+## Component Transformation Roadmap (v2)
 
-theclaw 只管理自己的配置，不侵入各组件的配置空间：
+### pai — CLI/LIB Dual Interface Module
 
-| 数据 | 位置 | 管理者 |
-|------|------|--------|
-| theclaw 自身配置 | `~/.config/theclaw/config.json` | theclaw |
-| 使用的 profile 记录 | `~/.config/theclaw/config.json` | theclaw |
-| pai 配置 | `~/.config/pai/default.json` | pai（setup 时由 theclaw 通过 `pai model config` 写入） |
-| xgw 配置 | `~/.config/xgw/config.yaml` | xgw（setup 时由 theclaw 直接写入） |
-| agent 配置 | `~/.theclaw/agents/<id>/config.yaml` | agent（setup 时由 theclaw 通过 `agent init` 写入） |
-| notifier 数据 | `~/.local/share/notifier/` | notifier |
+**Status**: ✅ Complete
 
-`~/.config/theclaw/config.json` 内容：
+**Transformation:**
+- Core logic extracted to `src/lib/`
+- `src/index.ts` as ESM lib entry, exports all public interfaces
+- `src/cli.ts` as CLI entry, maintains existing `pai chat` / `pai model` commands
+- Streaming interface returns `AsyncIterable<string>`, not direct stdout write
+
+**xar Usage**: Import pai lib, call directly, stream tokens forwarded to xgw via IPC.
+
+**LLM Value**: `pai chat` CLI unchanged, LLM can continue independent LLM calls.
+
+### thread — CLI/LIB Dual Interface Module
+
+**Status**: ✅ Complete
+
+**Transformation:**
+- Core storage logic extracted to `src/lib/`, CLI as thin wrapper
+- lib interface driven by xar's actual needs, not mechanical CLI lib-ification
+- CLI positioned as management and diagnostic tool, not promoted as primary LLM tool
+
+**xar Usage**: Import thread lib, operate SQLite directly, not via CLI.
+
+**LLM Value**: thread CLI preserved for advanced users and debugging.
+
+### xar — Agent Runtime Daemon (全新实现)
+
+**Status**: ✅ Complete
+
+**Positioning**: New implementation from scratch, not refactored from old `agent` repo. Old `agent` repo kept as reference documentation, archived after xar stabilizes.
+
+**Responsibilities:**
+- In-memory event loop (replaces notifier file-polling-driven scheduling)
+- Thread event storage (via `thread` lib direct SQLite operation, not CLI)
+- Agent run-loop (async concurrent across agents, serial within agent)
+- LLM calls (via `pai` lib, not CLI)
+- Cron scheduling (built-in, only for agent internal tasks like memory compression, periodic introspection)
+- IPC Server (for xgw and management CLI connection)
+
+**External Interfaces:**
+- IPC Server (xgw communicates via this interface)
+- Management CLI (`agent` command for init/start/stop/status/list, for humans and LLM)
+
+**Streaming Support:**
+- xar holds LLM streaming write handle
+- Pushes tokens in real-time to xgw via IPC
+- xgw forwards via WebSocket to client
+
+**Naming:**
+- Development: repo named `xar` (x + agent runtime)
+- Stable: CLI command renamed to `agent`, old `agent` repo deprecated
+
+**Internal Architecture:**
+
+```
+xar/
+├── src/
+│   ├── index.ts              # CLI 入口（commander，命令名 xar）
+│   ├── config.ts             # 环境变量与路径配置
+│   ├── logging.ts            # Daemon/agent 日志工具
+│   ├── types.ts              # 共享类型定义
+│   ├── commands/             # CLI 子命令
+│   │   ├── daemon.ts         # xar daemon start/stop/status
+│   │   ├── init.ts           # xar init <id>
+│   │   ├── start.ts          # xar start <id>
+│   │   ├── stop.ts           # xar stop <id>
+│   │   ├── status.ts         # xar status [<id>]
+│   │   ├── list.ts           # xar list
+│   │   ├── chat.ts           # xar chat（调试用）
+│   │   └── send.ts           # xar send（调试用）
+│   ├── daemon/
+│   │   ├── index.ts          # Daemon 主入口（生命周期、agent 管理、IPC 消息处理）
+│   │   ├── ipc-chunk-writer.ts # Writable 实现，将 LLM token 写入 IPC stream
+│   │   ├── pid.ts            # PID 文件管理
+│   │   └── types.ts
+│   ├── agent/
+│   │   ├── config.ts         # Agent 配置加载与校验
+│   │   ├── run-loop.ts       # 消息处理循环（per-agent async，不同 agent 并发）
+│   │   ├── router.ts         # inbox 消息 → 目标 thread 路由
+│   │   ├── context.ts        # LLM context 构建（system prompt 组装）
+│   │   ├── memory.ts         # Session compact（对齐 agent repo compactor 逻辑）
+│   │   ├── session.ts        # Session JSONL 读写、token 估算
+│   │   ├── queue.ts          # AsyncQueue<Message>（per-agent 内存消息队列）
+│   │   ├── thread-lib.ts     # thread lib 封装（open/init/exists）
+│   │   ├── deliver.ts        # 出站投递（通过 IPC → xgw）
+│   │   └── types.ts
+│   ├── ipc/
+│   │   ├── server.ts         # createIpcServer()（WebSocket over Unix socket + TCP fallback）
+│   │   ├── client.ts         # IpcClient（CLI 命令用）
+│   │   └── types.ts
+│   └── repo-utils/           # 跨 repo 共通工具（从 pai 同步）
+├── package.json              # dependencies: thread, pai（均为 CLI/LIB 双接口模块）
+├── tsconfig.json
+├── tsup.config.ts            # 单 entry: src/index.ts，带 shebang
+└── vitest.config.ts
+```
+
+**CLI Command Structure:**
+
+```
+xar daemon start              # 启动 xar daemon（后台）
+xar daemon stop               # 停止 xar daemon
+xar daemon status             # 查看 daemon 运行状态
+
+xar init <id> [--kind system|user]   # 初始化 agent
+xar start <id>                       # 启动 agent（注册到 daemon）
+xar stop <id>                        # 停止 agent（从 daemon 注销）
+xar status [<id>]                    # 查看 agent 状态
+xar list                             # 列出所有 agent
+```
+
+**Core Runtime Mechanism:**
+
+1. **Message Queue Model**: Each agent owns independent in-memory message queue (`AsyncQueue<Message>`). IPC server distributes inbound messages by `agent_id` to corresponding queue, run-loop continuously consumes via `for await`. Naturally implements "concurrent across agents, serial within agent".
+
+2. **run-loop Lifecycle**: run-loop runs continuously after daemon startup, awaits new messages on empty queue, never exits. Necessary for streaming—LLM call needs persistent IPC connection to push tokens.
+
+3. **Tool Call Execution**: tool call (`bash_exec`) handled internally by pai lib, xar doesn't intercept. xar only passes allowed tool config when calling pai lib.
+
+4. **Memory Management** (two-level):
+   - **Session-level compact (sync path)**: Before each LLM call, context.ts checks current session token estimate, compacts if over threshold, writes to `sessions/<thread_id>.jsonl`
+   - **Cross-session Memory (async path)**: After processing each message, run-loop emits session lifecycle events, background memory processor consumes asynchronously, updates per-peer or per-agent memory
+
+5. **Session Files & Lightweight Sub-agents**: `pai chat --session <file>` session file mechanism fully preserved. Enables `pai chat` itself as stateful multi-turn tool, suitable for temporary sub-agents, human-LLM interaction, agent-internal one-off subtasks.
+
+### xgw — Upgrade to IPC Communication
+
+**Status**: ✅ Complete
+
+**Transformation:**
+- Inbound: channel plugin receives message, sends via IPC to xar (not `thread push` CLI)
+- Outbound: xar actively pushes reply to xgw via IPC, xgw forwards to channel (not wait for `agent deliver` CLI)
+- IPC protocol supports streaming (xar → xgw token stream)
+
+**Message Path:**
+```
+Inbound:  client → xgw(ws/webhook) → xar(IPC)
+Outbound: xar(IPC) → xgw(ws/webhook) → client
+```
+
+**Unchanged:**
+- Channel plugin model (telegram, slack, tui, webchat, etc.)
+- All management CLI (`xgw status/reload/route/channel/agent`)
+- `xgw send` CLI downgraded to diagnostic/test tool, no longer agent outbound path
+
+### notifier — Keep Current, Independent Evolution
+
+**Status**: ✅ No transformation
+
+**Positioning**: Independent general-purpose task scheduling tool, xar doesn't depend on it. xar implements own scheduling logic. notifier evolves independently.
+
+**LLM Value**: `notifier task add` / `notifier timer add` are valid LLM tools for arbitrary shell command scheduling.
+
+### cmds — Keep Current, Independent Evolution
+
+**Status**: ✅ No transformation
+
+**Positioning**: LLM capability discovery entry point, stability paramount.
+
+### xdb — Keep Current, Optional Future Transformation
+
+**Status**: ✅ No transformation
+
+**Current**: Pure CLI, unchanged.
+
+**Optional Future**: Transform to CLI/LIB dual interface, cmds could optionally depend on its lib interface (but incremental value limited, not priority).
+
+### xweb — Keep Current, Independent Evolution
+
+**Status**: ✅ No transformation
+
+**Positioning**: Foundation for LLM internet access, stable encapsulation unit, independent iteration.
+
+### agent (old repo) — Functionality Absorbed by xar, Archived
+
+**Status**: ✅ Deprecated, archived
+
+**No Refactoring**: Old `agent` repo design assumptions (notifier-driven, file-lock serial) differ too much from xar, refactoring more painful than rewrite.
+
+**Handling**: Archived deprecated (README marked DEPRECATED), kept as design reference. Old `agent` CLI commands (init/start/stop/status/list/chat/send) completely replaced by xar management CLI. `agent run` and `agent deliver` internalized into xar daemon run-loop and IPC delivery.
+
+---
+
+## Streaming Complete Path (v2)
+
+```
+User input
+  → xgw-tui (WebSocket)
+  → xgw TUI plugin
+  → xgw IPC → xar (in-memory queue)
+  → agent run-loop
+  → pai lib (streaming LLM call)
+  → streaming tokens → xar IPC → xgw
+  → xgw TUI plugin (WebSocket push)
+  → xgw-tui terminal real-time display
+```
+
+Each hop in-process or streaming-capable IPC, no batch processing boundaries.
+
+---
+
+## xar IPC Protocol (Draft)
+
+xar exposes IPC Server supporting following operations:
+
+### Connection Method
+
+Prefer Unix socket (`~/.theclaw/xar.sock`), fallback to local HTTP+WebSocket (`127.0.0.1:18792`).
+
+### Message Types
+
+**Inbound (xgw → xar):**
+```json
+{ "type": "inbound_message", "agent_id": "admin", "message": { ...Message } }
+```
+
+**Outbound streaming (xar → xgw):**
+```json
+{ "type": "stream_start", "reply_context": { "channel_id": "...", "peer_id": "...", "session_id": "..." } }
+{ "type": "stream_token", "token": "Hello" }
+{ "type": "stream_token", "token": " world" }
+{ "type": "stream_end" }
+```
+
+**Management operations (CLI → xar):**
+```json
+{ "type": "agent_init", "agent_id": "admin", "kind": "system" }
+{ "type": "agent_start", "agent_id": "admin" }
+{ "type": "agent_stop", "agent_id": "admin" }
+{ "type": "agent_status", "agent_id": "admin" }
+{ "type": "task_add", "author": "...", "task_id": "...", "command": "..." }
+{ "type": "timer_add", "author": "...", "task_id": "...", "timer": "0 2 * * *", "command": "..." }
+```
+
+---
+
+## Configuration Data Boundaries
+
+TheClaw manages only its own config, doesn't intrude into component config spaces:
+
+| Data | Location | Manager |
+|------|----------|---------|
+| theclaw config | `~/.config/theclaw/config.json` | theclaw |
+| profile record | `~/.config/theclaw/config.json` | theclaw |
+| pai config | `~/.config/pai/default.json` | pai (theclaw writes via `pai model config` during setup) |
+| xgw config | `~/.config/xgw/config.yaml` | xgw (theclaw writes directly during setup) |
+| agent config | `~/.theclaw/agents/<id>/config.yaml` | agent (theclaw writes via `agent init` during setup) |
+| notifier data | `~/.local/share/notifier/` | notifier |
+
+`~/.config/theclaw/config.json` content:
 
 ```json
 {
@@ -250,133 +495,105 @@ theclaw 只管理自己的配置，不侵入各组件的配置空间：
 
 ---
 
-## 可观测性脚本
+## Observability Scripts
 
-放在 `scripts/` 目录下，随 theclaw 包分发。这些脚本是纯 bash，不依赖 theclaw 运行时，人类和 maintainer agent 都可以直接调用。
+Located in `scripts/` directory, distributed with theclaw package. Pure bash scripts, don't depend on theclaw runtime, humans and maintainer agent can call directly.
 
 ### `theclaw-status.sh`
 
-聚合各组件状态的快捷脚本。等价于 `theclaw status` 但不依赖 theclaw 命令本身。
-
-```bash
-#!/bin/bash
-echo "=== notifier ==="
-notifier status
-echo "=== xgw ==="
-xgw status
-echo "=== agents ==="
-agent list
-for id in $(agent list --json | jq -r '.[].id'); do
-  echo "--- $id ---"
-  agent status "$id"
-done
-```
+Shortcut script aggregating component status. Equivalent to `theclaw status` but doesn't depend on theclaw command itself.
 
 ### `theclaw-logs.sh`
 
-聚合查看各组件最近日志。
+Aggregate view of recent component logs.
 
 ```bash
 theclaw-logs.sh [--lines <n>] [--component <name>]
 ```
 
-默认显示每个组件最近 20 行日志：
-- notifier: `~/.local/share/notifier/logs/notifier.log`
-- xgw: `~/.local/share/xgw/logs/xgw.log`
-- agents: `~/.theclaw/agents/*/logs/agent.log`
+Default shows last 20 lines per component.
 
 ### `theclaw-threads.sh`
 
-列出系统中所有 thread 及其摘要信息。
+List all threads in system with summary info.
 
 ```bash
 theclaw-threads.sh [--agent <id>]
 ```
 
-遍历 `~/.theclaw/agents/*/` 下的所有 thread 目录，对每个调用 `thread info --json`，汇总输出：
-- thread 路径
-- 事件总数
-- 订阅者数量
-- 最近事件时间
-
 ### `theclaw-trace.sh`
 
-追踪一条消息从入站到出站的完整路径。给定一个 event id 或消息关键词，在各组件日志和 thread 事件中搜索关联记录。
+Trace complete path of message from inbound to outbound. Given event id or message keyword, search related records in component logs and thread events.
 
 ```bash
 theclaw-trace.sh --message-id <uuid>
 theclaw-trace.sh --keyword <text> [--since <time>]
 ```
 
-搜索路径：
-1. xgw 日志（入站记录）
-2. agent inbox thread（`thread peek --filter "content LIKE '%<keyword>%'"`)
-3. agent 对话 thread（路由后的目标 thread）
-4. xgw 日志（出站记录）
-
-输出时间线格式：
-
-```
-10:30:01.456  xgw      inbound   channel=telegram-main peer=alice msg_id=abc123
-10:30:01.500  thread   inbox     agent=admin event_id=42
-10:30:01.600  agent    route     admin → threads/peers/telegram-main-alice
-10:30:02.100  pai      chat      tokens=1234 duration=1.5s
-10:30:02.200  thread   push      agent=admin thread=peers/telegram-main-alice event_id=15
-10:30:02.300  agent    deliver   channel=telegram-main peer=alice
-10:30:02.400  xgw      outbound  channel=telegram-main peer=alice
-```
-
 ### `theclaw-health.sh`
 
-健康检查脚本，供 maintainer agent 定期调用。
+Health check script for maintainer agent periodic calls.
 
 ```bash
 theclaw-health.sh [--json]
 ```
 
-检查项：
-- notifier daemon 是否运行
-- xgw daemon 是否运行，各 channel 是否 healthy
-- 各 agent 是否已注册 inbox 订阅
-- 各 agent inbox 是否有积压（pending 消息数超过阈值）
-- 磁盘空间（日志和 thread 数据目录）
+---
 
-JSON 输出供 maintainer agent 解析决策：
+## Environment Variables
 
-```json
-{
-  "healthy": false,
-  "checks": [
-    { "name": "notifier", "status": "ok" },
-    { "name": "xgw", "status": "ok" },
-    { "name": "agent:admin", "status": "ok" },
-    { "name": "agent:warden", "status": "warning", "detail": "inbox pending: 15" },
-    { "name": "disk", "status": "ok", "detail": "logs: 120MB, threads: 45MB" }
-  ]
-}
-```
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `THECLAW_HOME` | Data root directory | `~/.theclaw` |
+| `THECLAW_CONFIG` | theclaw config file path | `~/.config/theclaw/config.json` |
+
+TheClaw doesn't introduce new global environment variables for other components—each component's env vars defined in their own SPEC.
 
 ---
 
-## 环境变量
+## Technology Stack
 
-| 变量 | 说明 | 默认值 |
-|------|------|--------|
-| `THECLAW_HOME` | 数据根目录 | `~/.theclaw` |
-| `THECLAW_CONFIG` | theclaw 配置文件路径 | `~/.config/theclaw/config.json` |
-
-theclaw 不引入新的全局环境变量给其他组件——各组件的环境变量由各自 SPEC 定义。
-
----
-
-## 技术栈
-
-与其他组件一致：
+Consistent with other components:
 
 - TypeScript + ESM (Node 22+)
-- 构建: tsup
-- CLI 解析: commander
-- YAML 解析: js-yaml（profile 和 components.yaml）
-- 测试: vitest（仅测试 profile-loader、component-manager 等自身逻辑）
+- Build: tsup
+- CLI parsing: commander
+- YAML parsing: js-yaml (profile and components.yaml)
+- Testing: vitest (only for profile-loader, component-manager own logic)
 
-theclaw 不需要 SQLite、better-sqlite3 等重依赖。它是一个轻量的编排层。
+TheClaw doesn't need SQLite, better-sqlite3 or heavy dependencies. It's a lightweight orchestration layer.
+
+---
+
+## Immutable Principles
+
+Following principles maintained in v2:
+
+1. **LLM tool interface all CLI**: `cmds`, `xdb`, `xweb`, `pai`, `thread` (management), `agent` (management), `notifier` (scheduling) all remain CLI form, LLM calls via single `bash_exec` tool
+2. **Agent as directory**: Each agent's data in `~/.theclaw/agents/<id>/`, filesystem is ground truth
+3. **Thread first-class citizen**: Event stream, persistent memory, observability foundation unchanged
+4. **Observability first**: All thread data human-readable (SQLite + JSONL), not black box despite runtime consolidation
+
+---
+
+## Implementation Status (2026-03-26 Verified)
+
+| Component | Planned | Status | Code | Tests | Docs |
+|-----------|---------|--------|------|-------|------|
+| pai | CLI/LIB dual | ✅ Complete | ✅ | ✅ 32 files passed | ✅ |
+| thread | CLI/LIB dual | ✅ Complete | ✅ | ✅ 20 files, 211 tests | ✅ |
+| xar | New daemon | ✅ Complete | ✅ | ✅ 26 files, 115 tests | ✅ |
+| xgw | IPC upgrade | ✅ Complete | ✅ | ✅ 22 files, 209 tests | ✅ |
+| notifier | Keep current | ✅ Unchanged | — | — | ✅ |
+| cmds | Keep current | ✅ Unchanged | — | — | ✅ |
+| xdb | Keep current | ✅ Unchanged | — | — | ✅ |
+| xweb | Keep current | ✅ Unchanged | — | — | ✅ |
+| agent (old) | Archive | ✅ Deprecated | — | — | ✅ |
+
+---
+
+## See Also
+
+- [CLI-LIB-Module-Spec.md](./CLI-LIB-Module-Spec.md) — Dual interface module specification (cross-repo design pattern)
+- [BootstrapDesign.md](./arch/BootstrapDesign.md) — Detailed setup flow and idempotency rules
+- [TheClawArchitecture.md](./arch/TheClawArchitecture.md) — Historical architecture reference
