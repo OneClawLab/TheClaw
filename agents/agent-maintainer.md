@@ -20,34 +20,30 @@ Maintainer 是 TheClaw 的运维 agent，负责系统健康检查、错误恢复
 1. **事件驱动**（inbox）：接收 agent error hook 通知、admin 转发的运维请求
 2. **定时巡检**（notifier timer）：周期性健康检查
 
-```yaml
-# maintainer config.yaml
-agent_id: maintainer
-kind: system
-
-pai:
-  provider: openai
-  model: gpt-4o
-
-routing:
-  default: per-agent    # 所有消息共享一个 thread
-
-run_on_empty_inbox: true    # 定时巡检需要在 inbox 为空时也执行
-
-# maintainer 特有配置
-maintenance:
-  health_check:
-    interval_cron: "*/10 * * * *"   # 每 10 分钟健康检查
-    full_check_cron: "0 */6 * * *"  # 每 6 小时完整检查（含升级检测）
-
-  recovery:
-    auto_restart_daemons: true       # daemon 挂了自动重启
-    auto_retry_stuck_agents: true    # agent inbox 积压时自动触发 run
-    stuck_threshold: 50              # inbox 积压超过此数视为 stuck
-
-  upgrade:
-    auto_minor: false                # 小版本自动升级（默认关闭，需 owner 开启）
-    check_interval_cron: "0 4 * * *" # 每天凌晨 4 点检查新版本
+```json
+// maintainer config.json
+{
+  "agent_id": "maintainer",
+  "kind": "system",
+  "pai": { "provider": "openai", "model": "gpt-4o" },
+  "routing": { "default": "per-agent" },
+  "run_on_empty_inbox": true,
+  "maintenance": {
+    "health_check": {
+      "interval_cron": "*/10 * * * *",
+      "full_check_cron": "0 */6 * * *"
+    },
+    "recovery": {
+      "auto_restart_daemons": true,
+      "auto_retry_stuck_agents": true,
+      "stuck_threshold": 50
+    },
+    "upgrade": {
+      "auto_minor": false,
+      "check_interval_cron": "0 4 * * *"
+    }
+  }
+}
 ```
 
 ---
@@ -63,8 +59,8 @@ maintainer 的健康检查覆盖系统所有层级：
 | daemon | notifier 是否运行 | `notifier status --json` | `running: true` |
 | daemon | xgw 是否运行 | `xgw status --json` | `running: true` |
 | channel | 各渠道是否连通 | `xgw channel health --json` | 所有 channel `healthy: true` |
-| agent | 各 agent 是否已注册订阅 | `agent status --json` | `started: true` |
-| agent | inbox 是否积压 | `agent status <id> --json` | `inbox_pending < stuck_threshold` |
+| agent | 各 agent 是否已注册 | `xar status --json` | 所有 agent `started: true` |
+| agent | inbox 是否积压 | `xar status <id> --json` | `inbox_pending < stuck_threshold` |
 | agent | 最近是否有 error event | `thread peek` 检查 error 事件 | 无近期 error |
 | storage | 磁盘空间 | `df`, `du` | 使用率 < 90% |
 
@@ -144,9 +140,9 @@ maintainer run (定时触发)
   │
   ├── 1. notifier status --json → 检查 daemon
   ├── 2. xgw status --json → 检查 gateway + channels
-  ├── 3. agent list --json → 遍历所有 agent
+  ├── 3. xar list --json → 遍历所有 agent
   │      └── 对每个 agent:
-  │          ├── agent status <id> --json → 检查状态
+  │          ├── xar status <id> --json → 检查状态
   │          └── thread peek inbox → 检查积压和 error
   ├── 4. df / du → 检查磁盘
   │
@@ -208,7 +204,7 @@ maintainer 收到 error 通知后，根据错误类型决定恢复策略：
 | 错误类型 | 判断依据 | 恢复动作 |
 |---------|---------|---------|
 | daemon 挂了 | `notifier status` / `xgw status` 返回 stopped | 自动重启：`notifier start` / `xgw start` |
-| agent inbox 积压 | `inbox_pending > stuck_threshold` | 手动触发一次 `agent run <id>` |
+| agent inbox 积压 | `inbox_pending > stuck_threshold` | 向 agent 发送唤醒消息触发处理 |
 | agent 持续 error | 同一 agent 短时间内多次 error | 通知 owner，建议检查 agent 配置或 IDENTITY.md |
 | channel 不健康 | `xgw channel health` 返回 unhealthy | 尝试 `xgw reload`；仍不健康则通知 owner |
 | 磁盘空间不足 | `df` 使用率 > 90% | 清理旧日志（rotated logs）；仍不足则通知 owner |
@@ -218,11 +214,11 @@ maintainer 收到 error 通知后，根据错误类型决定恢复策略：
 
 ```bash
 # daemon 重启
-notifier start
+xar daemon start
 xgw start
 
-# 触发 stuck agent
-agent run <id>
+# 触发 stuck agent（向其 inbox 发送唤醒消息）
+xar send <id> --text "处理积压消息"
 
 # 清理旧日志
 find ~/.theclaw/agents/*/logs/ -name "*-20*.log" -mtime +7 -delete
@@ -236,10 +232,10 @@ find ~/.theclaw/agents/*/inbox/ -name "events-20*.jsonl" -mtime +30 -delete
 
 ### 恢复安全边界
 
-- maintainer 可以重启 daemon（notifier、xgw）
-- maintainer 可以触发 `agent run`（处理积压）
+- maintainer 可以重启 daemon（xar、xgw）
+- maintainer 可以向 agent 发送唤醒消息（处理积压）
 - maintainer 不能重启被 warden 停止的 agent（需要 owner 确认）
-- maintainer 不能修改 agent 的 IDENTITY.md 或 config.yaml（那是 evolver 或 owner 的职责）
+- maintainer 不能修改 agent 的 IDENTITY.md 或 config.json（那是 evolver 或 owner 的职责）
 - maintainer 可以清理旧日志和 rotated 文件，但不能删除当前活跃的日志或 thread 数据
 
 ---
@@ -351,7 +347,7 @@ admin → thread push → maintainer inbox
 
 1. `notifier status --json` — 检查 notifier daemon
 2. `xgw status --json` — 检查 xgw daemon 和 channels
-3. `agent list --json` + 逐个 `agent status <id> --json` — 检查所有 agent
+3. `xar list --json` + 逐个 `xar status <id> --json` — 检查所有 agent
 4. 检查磁盘使用
 5. 对比 health-state.json，检测状态变化
 6. 更新 health-state.json
@@ -360,8 +356,8 @@ admin → thread push → maintainer inbox
 ## 错误恢复
 
 收到 error 通知时：
-- daemon 挂了 → 自动重启（notifier start / xgw start）
-- agent inbox 积压 → 触发 agent run
+- daemon 挂了 → 自动重启（xar daemon start / xgw start）
+- agent inbox 积压 → 发送唤醒消息
 - agent 持续 error → 通知 owner
 - channel 不健康 → 尝试 xgw reload，仍不行则通知 owner
 - 磁盘不足 → 清理旧日志，仍不足则通知 owner
@@ -381,8 +377,8 @@ admin → thread push → maintainer inbox
 - `notifier status --json` / `notifier start` / `notifier stop`
 - `xgw status --json` / `xgw start` / `xgw stop` / `xgw reload`
 - `xgw channel health --json`
-- `agent status --json` / `agent status <id> --json`
-- `agent run <id>` — 手动触发 agent 处理积压
+- `xar status --json` / `xar status <id> --json`
+- `xar send <id> --text "..."` — 向 agent 发送唤醒消息
 - `theclaw-health.sh --json` — 快速健康检查
 - `theclaw upgrade [--component <name>]` — 执行升级
 - `du -sh ~/.theclaw/agents/*/` — 磁盘使用
@@ -429,14 +425,13 @@ Maintainer 主要自主运行（定时巡检 + error 事件驱动），不需要
 
 - 不会重启被 warden 停止的 agent（需要 owner 确认）
 - 不会修改 agent 的 IDENTITY.md 或配置（那是 evolver 的职责）
-- 不会删除当前活跃的日志或 thread 数据
 ```
 
 ---
 
-## Phase 3 回写需求
+## 待回写需求
 
 | 修改 | 目标 SPEC | 说明 |
 |------|----------|------|
 | status --json 统一 schema | 所有组件 SPEC | 顶层 `component`/`version`/`status`/`details` 统一结构 |
-| error hook 通知 maintainer | agent/SPEC.md | config.yaml 新增 `maintainer.notify_on_error` + `maintainer.maintainer_inbox`（与 warden notify 机制并列） |
+| error hook 通知 maintainer | xar/SPEC.md | config.json 新增 `maintainer.notify_on_error` + `maintainer.maintainer_inbox`（与 warden notify 机制并列） |

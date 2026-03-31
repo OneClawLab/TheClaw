@@ -35,7 +35,7 @@ export const registryProvider: ComponentProvider = {
   components: registryComponents,
   needsAction: (current, target) => current !== target,
   async install(componentName, def) {
-    await execShell(`npm install -g ${componentName}@${def.version}`)
+    await execShell(`npm install -g @theclawlab/${componentName}@${def.version}`)
   },
 }
 

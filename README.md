@@ -13,8 +13,6 @@ TheClaw is a agent runtime that inherits core principles from OpenClaw with seve
 
 `TheClaw` repo wraps all commands repos into one unified distributable agent platform.
 
-NOTE: This is still in very early research and development phase, not ready yet.
-
 # Architecture
 
 See [SPEC.md](./SPEC.md) for complete architecture and design documentation.

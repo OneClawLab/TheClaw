@@ -35,7 +35,7 @@ agent 通过 `bash_exec` 执行的命令可能造成破坏。
 **检测方式**：订阅各 agent thread 中的 `record/toolcall` 事件，解析 command 字段进行模式匹配。
 
 **响应**：
-- 高危：立即 `agent stop <id>`，通知 owner（via admin）
+- 高危：立即 `xar stop <id>`，通知 owner（via admin）
 - 中危：记录告警，通知 owner，不自动停止
 - 低危：仅记录，累计超过阈值时告警
 
@@ -54,7 +54,7 @@ LLM 调用量和 token 消耗异常可能意味着 agent 行为失控或被滥�
 
 **响应**：
 - 超过软限制：告警通知 owner
-- 超过硬限制：`agent stop <id>`，通知 owner
+- 超过硬限制：`xar stop <id>`，通知 owner
 
 #### S3: 行为偏离检测
 
@@ -71,7 +71,7 @@ agent 的行为偏离 IDENTITY.md 中定义的职责范围。
 - 交互模式：统计 thread 中的事件频率和模式
 - 职责匹配：将 toolcall 内容与 agent 的 USAGE.md 描述的能力范围比对（需要 LLM 辅助判断）
 
-**响应**：记录告警，通知 owner。严重越权时 `agent stop`。
+**响应**：记录告警，通知 owner。严重越权时 `xar stop`。
 
 #### S4: Prompt Injection 防护
 
@@ -101,11 +101,11 @@ agent 的行为偏离 IDENTITY.md 中定义的职责范围。
 |------|---------|
 | 监控 toolcall | thread 中 `record/toolcall` 事件，warden 可通过 `thread subscribe` 订阅 |
 | 监控 error | thread 中 `record/error` 事件 |
-| 停止 agent | `agent stop <id>` |
+| 停止 agent | `xar stop <id>` |
 | 通知 owner | `thread push` 到 admin inbox |
 | 定时巡检 | `notifier timer add` |
 | 读取 thread 事件 | `thread peek`（只读，不消费） |
-| 读取 agent 状态 | `agent status --json` |
+| 读取 agent 状态 | `xar status --json` |
 | 读取系统状态 | `theclaw-health.sh --json` |
 
 ### 缺口与解决方案
@@ -152,11 +152,14 @@ agent run 写入 `record/error` 事件后，warden 应该能及时感知，而�
 
 **解决方案**：在 agent 框架层（agent run-loop）增加一个可选的 error hook：当 agent 写入 `record/error` 事件时，同时向 warden inbox 发送一条通知。
 
-```yaml
-# agent config.yaml（所有 agent 的 defaults）
-warden:
-  notify_on_error: true
-  warden_inbox: ~/.theclaw/agents/warden/inbox
+```json
+// agent config.json（所有 agent 的 defaults）
+{
+  "warden": {
+    "notify_on_error": true,
+    "warden_inbox": "~/.theclaw/agents/warden/inbox"
+  }
+}
 ```
 
 agent run 写 error event 后：
@@ -176,7 +179,7 @@ thread push \
 
 **现实评估**：实时拦截需要在 pai 的 tool execution 路径中插入 hook，这会显著增加复杂度和延迟。
 
-**务实方案**：不做执行前拦截，改为执行后快速检测 + 响应。warden 通过 error hook（缺口 3）和定时巡检（缺口 2）尽快发现问题，通过 `agent stop` 阻止后续危险操作。
+**务实方案**：不做执行前拦截，改为执行后快速检测 + 响应。warden 通过 error hook（缺口 3）和定时巡检（缺口 2）尽快发现问题，通过 `xar stop` 阻止后续危险操作。
 
 对于已知的高危命令模式，可以在 agent 的 IDENTITY.md 中明确禁止（LLM 层面的软约束），warden 作为第二道防线进行事后审计。
 
@@ -215,7 +218,7 @@ warden 不是被动等待消息的 agent——它同时使用两种触发机制�
 |--------|---------|---------|
 | agent thread 事件 | `thread peek --filter "subtype IN ('toolcall','error','usage')"` | 危险命令、错误、token 用量 |
 | agent 日志 | 读取 `~/.theclaw/agents/*/logs/agent.log` | LLM 调用频率、异常模式 |
-| agent 状态 | `agent status --json` | 是否运行、inbox 积压 |
+| agent 状态 | `xar status --json` | 是否运行、inbox 积压 |
 | xgw 状态 | `xgw status --json` | 渠道健康 |
 | notifier 状态 | `notifier status --json` | daemon 运行状态 |
 | 系统资源 | `du`, `df` | 磁盘使用 |
@@ -229,35 +232,19 @@ warden 的定时巡检通过 notifier timer 触发，默认每 5 分钟一次：
 notifier timer add \
   --author warden \
   --task-id patrol \
-  --command "agent run warden" \
+  --command "xar send warden --text patrol" \
   --timer "*/5 * * * *" \
   --description "Warden periodic patrol"
 ```
 
-但 `agent run` 只处理 inbox 消息。warden 的巡检逻辑需要在 inbox 为空时也执行。
+但 xar 的 run-loop 是持续运行的（v2 架构），不存在"inbox 为空时退出"的问题。warden 的巡检逻辑通过 `run_on_empty_inbox: true` 配置实现：即使没有新的 inbox 消息，run-loop 也会周期性执行一次 LLM 调用（让 LLM 决定是否需要执行巡检）。
 
-**实现方式**：warden 的 run-loop 在标准 inbox 消费之外，额外执行巡检逻辑。这通过 warden 的 IDENTITY.md 指导 LLM 在每次 run 时主动调用巡检命令实现：
-
-```markdown
-## 巡检职责
-
-每次你被唤醒时（无论是否有 inbox 消息），都要执行以下巡检：
-1. 调用 bash_exec 执行 theclaw-health.sh --json，检查系统健康
-2. 扫描各 agent 的最近 toolcall 事件，检查是否有危险命令
-3. 统计各 agent 的 token 用量，检查是否超过预算
-4. 将巡检结果记录到你的巡检 thread 中
+```json
+// warden config.json
+{
+  "run_on_empty_inbox": true
+}
 ```
-
-但这有个问题：标准 `agent run` 在 inbox 为空时直接退出（SPEC 5.4 步骤 2）。warden 需要一个变体：即使 inbox 为空也执行一次 LLM 调用。
-
-**解决方案**：在 agent config.yaml 中增加 `run_on_empty_inbox: true` 选项。当此选项为 true 时，`agent run` 在 inbox 为空时不直接退出，而是以"无新消息"为 context 执行一次 LLM 调用（让 LLM 决定是否需要执行巡检）。
-
-```yaml
-# warden config.yaml
-run_on_empty_inbox: true    # 即使 inbox 为空也执行 run-loop
-```
-
-这需要 agent SPEC 补充此选项（Phase 3 回写）。
 
 ### 告警与响应
 
@@ -265,7 +252,7 @@ warden 发现问题后的响应动作：
 
 | 严重程度 | 响应动作 | 实现方式 |
 |---------|---------|---------|
-| 紧急（高危命令、硬限制超标） | 立即停止 agent + 通知 owner | `agent stop <id>` + `thread push` → admin inbox |
+| 紧急（高危命令、硬限制超标） | 立即停止 agent + 通知 owner | `xar stop <id>` + `thread push` → admin inbox |
 | 警告（中危命令、软限制超标、行为偏离） | 通知 owner，不自动停止 | `thread push` → admin inbox |
 | 信息（低危、统计报告） | 记录到 warden 自己的 thread | `thread push` → warden 巡检 thread |
 
@@ -315,47 +302,42 @@ warden 通过 `bash_exec` 读写此文件（JSON，LLM 可直接操作）。
 
 ### 安全策略配置
 
-```yaml
-# warden config.yaml
-agent_id: warden
-kind: system
-
-pai:
-  provider: openai
-  model: gpt-4o
-
-routing:
-  default: per-agent    # warden 所有消息共享一个 thread
-
-run_on_empty_inbox: true
-
-# warden 特有配置
-security:
-  # 危险命令模式（正则）
-  dangerous_commands:
-    critical:
-      - "rm\\s+-rf\\s+/"
-      - "mkfs"
-      - "dd\\s+if=/dev/(zero|random)"
-      - ":(){ :|:& };:"
-    warning:
-      - "sudo\\s+"
-      - "chmod\\s+777"
-      - "curl.*-X\\s+POST.*-d\\s+@"
-      - "cat.*(api_key|token|secret|password)"
-
-  # 资源限制
-  limits:
-    toolcall_per_run: 20          # 单次 run 最大 toolcall 次数
-    llm_calls_per_run: 10         # 单次 run 最大 LLM 调用次数
-    tokens_per_hour: 100000       # 每小时 token 预算（所有 agent 合计）
-    tokens_per_hour_per_agent: 30000  # 每小时 token 预算（单个 agent）
-    disk_warning_mb: 1000         # 磁盘使用告警阈值
-
-  # 巡检间隔
-  patrol:
-    interval_cron: "*/5 * * * *"  # 每 5 分钟
-    full_scan_cron: "0 * * * *"   # 每小时完整扫描（含磁盘检查）
+```json
+// warden config.json
+{
+  "agent_id": "warden",
+  "kind": "system",
+  "pai": { "provider": "openai", "model": "gpt-4o" },
+  "routing": { "default": "per-agent" },
+  "run_on_empty_inbox": true,
+  "security": {
+    "dangerous_commands": {
+      "critical": [
+        "rm\\s+-rf\\s+/",
+        "mkfs",
+        "dd\\s+if=/dev/(zero|random)",
+        ":(){ :|:& };:"
+      ],
+      "warning": [
+        "sudo\\s+",
+        "chmod\\s+777",
+        "curl.*-X\\s+POST.*-d\\s+@",
+        "cat.*(api_key|token|secret|password)"
+      ]
+    },
+    "limits": {
+      "toolcall_per_run": 20,
+      "llm_calls_per_run": 10,
+      "tokens_per_hour": 100000,
+      "tokens_per_hour_per_agent": 30000,
+      "disk_warning_mb": 1000
+    },
+    "patrol": {
+      "interval_cron": "*/5 * * * *",
+      "full_scan_cron": "0 * * * *"
+    }
+  }
+}
 ```
 
 ### Warden 的 IDENTITY.md
@@ -388,7 +370,7 @@ security:
 
 ## 响应动作
 
-- 发现高危命令或硬限制超标：立即 agent stop + 通知 admin
+- 发现高危命令或硬限制超标：立即 xar stop + 通知 admin
 - 发现中危命令或软限制超标：通知 admin
 - 发现低危异常：记录到 patrol thread
 
@@ -406,15 +388,15 @@ thread push --thread ~/.theclaw/agents/admin/inbox \
 
 你通过 bash_exec 调用系统命令。常用命令：
 - `thread peek --thread <path> --filter "subtype IN ('toolcall','error','usage')"` — 读取事件
-- `agent stop <id>` — 停止异常 agent
-- `agent status --json` — 查看 agent 状态
+- `xar stop <id>` — 停止异常 agent
+- `xar status --json` — 查看 agent 状态
 - `theclaw-health.sh --json` — 系统健康检查
 - `du -sh ~/.theclaw/agents/*/` — 磁盘使用
 
 ## 安全原则
 
 - 宁可误报不可漏报
-- 高危情况先停后问（先 agent stop，再通知 owner 确认）
+- 高危情况先停后问（先 xar stop，再通知 owner 确认）
 - 不要修改其他 agent 的配置或数据，只读 + 停止
 - 你自己的 toolcall 也受监控（由定时巡检自查）
 ```
@@ -452,13 +434,13 @@ warden 发现问题时会通过 admin 通知 owner，告警包含：
 
 ---
 
-## Phase 3 回写需求
+## 待回写需求
 
 本设计依赖以下底层修改：
 
 | 修改 | 目标 SPEC | 说明 |
 |------|----------|------|
 | `record/usage` subtype | thread/SPEC.md | 新增 event subtype，agent run 每次 LLM 调用后写入 token 用量 |
-| agent run 写 usage event | agent/SPEC.md | run-loop 步骤 3.d 后新增写 usage event |
-| error hook 通知 warden | agent/SPEC.md | config.yaml 新增 `warden.notify_on_error` + `warden.warden_inbox`，run-loop 写 error event 后同时通知 warden |
-| `run_on_empty_inbox` 选项 | agent/SPEC.md | config.yaml 新增选项，为 true 时 inbox 为空也执行一次 LLM 调用 |
+| agent run 写 usage event | xar/SPEC.md | run-loop 每次 LLM 调用后写 usage event |
+| error hook 通知 warden | xar/SPEC.md | config.json 新增 `warden.notify_on_error` + `warden.warden_inbox`，run-loop 写 error event 后同时通知 warden |
+| `run_on_empty_inbox` 选项 | xar/SPEC.md | config.json 新增选项，为 true 时 inbox 为空也执行一次 LLM 调用 |

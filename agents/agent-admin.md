@@ -138,11 +138,11 @@ Admin: 创建完成。coder agent 已启动并直接服务你。
 
 ```bash
 # 1. 初始化 agent
-agent init coder --kind user
+xar init coder --kind user
 
 # 2. 写入 IDENTITY.md（根据 peer 描述生成）
 # 3. 写入 USAGE.md（根据 peer 描述生成）
-# 4. 写入 config.yaml（含 agent 层 routing 配置）
+# 4. 写入 config.json（含 agent 层 routing 配置）
 
 # 5. 注册 agent inbox 到 xgw
 xgw agent add --id coder --inbox ~/.theclaw/agents/coder/inbox
@@ -151,8 +151,8 @@ xgw agent add --id coder --inbox ~/.theclaw/agents/coder/inbox
 #    使 peer 的消息直接路由到 coder，不经过 admin
 xgw route add --channel telegram-main --peer alice --agent coder
 
-# 7. 启动 agent（注册 inbox 订阅）
-agent start coder
+# 7. 启动 agent（注册到 xar daemon）
+xar start coder
 ```
 
 ### 两层 Routing 配置
@@ -187,10 +187,10 @@ routing:
 
 **第二层：agent routing（agent 内部如何路由到 thread）**
 
-写入 user agent 的 `config.yaml`：
+写入 user agent 的 `config.json`：
 
 ```yaml
-# coder config.yaml
+# coder config.json
 agent_id: coder
 kind: user
 
@@ -200,10 +200,6 @@ pai:
 
 routing:
   default: per-peer    # 每个 peer 独立 thread
-
-outbound:
-  - thread_pattern: "threads/peers/**"
-    via: xgw
 ```
 
 agent 层 routing 模式选择取决于 user agent 的使用场景：
@@ -225,7 +221,7 @@ xgw route remove --channel <channel_id> --peer <peer_id>
 xgw route list [--json]
 ```
 
-> **注意**：这是 xgw SPEC 中尚未定义的命令，需要在 Phase 3 回写时补充到 xgw/SPEC.md。
+> **注意**：xgw route/channel/agent 管理命令已在 xgw SPEC 中定义。
 
 ### 路由切换
 
@@ -243,14 +239,14 @@ Peer:  转给 coder        → admin 调用 xgw route 将 peer 的路由改为 c
 ### 列出 User Agent
 
 ```bash
-agent list --json | jq '.[] | select(.kind == "user")'
+xar list --json | jq '.[] | select(.kind == "user")'
 ```
 
 ### 停止/删除 User Agent
 
 ```bash
 # 暂停
-agent stop <agent_id>
+xar stop <agent_id>
 
 # 删除前先清理 xgw routing 和 agent 注册
 xgw route remove --channel telegram-main --peer alice
@@ -313,10 +309,10 @@ onboarding 不是硬编码的多步流程，而是 admin 的 IDENTITY.md 中包�
 ## User Agent 管理
 
 用户可以请求创建专用 agent。创建时你需要：
-1. 初始化 agent（agent init + IDENTITY.md + USAGE.md + config.yaml）
+1. 初始化 agent（xar init + IDENTITY.md + USAGE.md + config.json）
 2. 配置 xgw routing（xgw route add），使 peer 的消息直接路由到新 agent
 3. 配置 agent 层 routing（per-peer / per-agent 等）
-4. 启动 agent（agent start）
+4. 启动 agent（xar start）
 
 创建完成后，peer 的消息会直接发给新 agent，不再经过你。
 
@@ -334,8 +330,8 @@ onboarding 不是硬编码的多步流程，而是 admin 的 IDENTITY.md 中包�
 ## 工具使用
 
 你通过 bash_exec 调用系统命令。常用命令：
-- `agent list` / `agent status` — 查看 agent 状态
-- `agent init` / `agent start` / `agent stop` — 管理 agent 生命周期
+- `xar list` / `xar status` — 查看 agent 状态
+- `xar init` / `xar start` / `xar stop` — 管理 agent 生命周期
 - `xgw route add/remove/list` — 管理消息路由
 - `xgw channel add/remove/list` — 管理渠道实例
 - `xgw channel pair` — 配对新渠道（验证 credentials、设置 webhook 等）
@@ -490,31 +486,23 @@ admin 收到后，根据 `notify_peer` 找到对应 peer 的对话 thread，将�
 
 ## 配置
 
-```yaml
-# admin config.yaml
-agent_id: admin
-kind: system
-
-pai:
-  provider: openai
-  model: gpt-4o
-
-inbox:
-  path: ~/.theclaw/agents/admin/inbox
-
-routing:
-  default: per-peer
-
-outbound:
-  - thread_pattern: "threads/peers/**"
-    via: xgw
-
-# admin 特有配置
-admin:
-  # system agent USAGE.md 缓存刷新间隔（秒），0 = 每次 run 都重新读取
-  usage_cache_ttl: 3600
-  # onboarding 检测：memory 文件不存在时触发
-  onboarding_enabled: true
+```json
+// admin config.json
+{
+  "agent_id": "admin",
+  "kind": "system",
+  "pai": {
+    "provider": "openai",
+    "model": "gpt-4o"
+  },
+  "routing": {
+    "default": "per-peer"
+  },
+  "admin": {
+    "usage_cache_ttl": 3600,
+    "onboarding_enabled": true
+  }
+}
 ```
 
 ---
@@ -524,5 +512,5 @@ admin:
 - admin 可以创建/启停 user agent 并配置其 xgw routing，但不能创建/启停 system agent（system agent 只能通过 `theclaw setup` 管理）
 - admin 可以读取其他 agent 的 USAGE.md，但不能读取 IDENTITY.md（内部 system prompt 不对外暴露）
 - admin 转发消息时保留原始 peer 信息（`forwarded_from`），目标 agent 知道请求来源
-- admin 不能直接修改其他 agent 的配置文件，只能通过 agent CLI 和 xgw CLI 命令操作
+- admin 不能直接修改其他 agent 的配置文件，只能通过 xar CLI 和 xgw CLI 命令操作
 - user agent 也可以执行 `xgw route add`（用于"转给 X"），但只能修改自己当前服务的 peer 的路由

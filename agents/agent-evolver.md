@@ -33,23 +33,19 @@ Evolver 是 TheClaw 的自进化 agent，负责观察系统运行数据、发现
 | 被动（inbox 消息） | admin 转发 owner 的优化请求，或其他 agent 的 evolution-request |
 | 主动（owner via admin） | owner 明确要求"优化 X" |
 
-```yaml
-# evolver config.yaml
-agent_id: evolver
-kind: system
-
-pai:
-  provider: openai
-  model: gpt-4o
-
-routing:
-  default: per-agent
-
-run_on_empty_inbox: true
-
-evolution:
-  analysis_cron: "0 3 * * *"     # 每天凌晨 3 点分析
-  weekly_report_cron: "0 4 * * 1" # 每周一凌晨 4 点周报
+```json
+// evolver config.json
+{
+  "agent_id": "evolver",
+  "kind": "system",
+  "pai": { "provider": "openai", "model": "gpt-4o" },
+  "routing": { "default": "per-agent" },
+  "run_on_empty_inbox": true,
+  "evolution": {
+    "analysis_cron": "0 3 * * *",
+    "weekly_report_cron": "0 4 * * 1"
+  }
+}
 ```
 
 ---

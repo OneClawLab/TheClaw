@@ -22,44 +22,21 @@ TheClaw is an agent runtime platform that inherits core principles from OpenClaw
 
 ## Architecture Overview
 
-### v1: CLI Orchestration Layer (薄壳层)
+Current architecture uses in-memory/IPC service orchestration with streaming support.
 
-TheClaw v1 is a thin orchestration shell that:
-- Manages system initialization and component lifecycle
-- Provides unified status/logs/trace observability
-- Does not implement business logic—only composes CLI commands
-- Uses internal provider model for component installation
-
-**Key Components:**
-- `theclaw setup`: System initialization with profile-driven configuration
-- `theclaw status`: Aggregated system status view
-- `theclaw upgrade`: Component version management
-- Observability scripts: `theclaw-status.sh`, `theclaw-logs.sh`, `theclaw-threads.sh`, `theclaw-trace.sh`, `theclaw-health.sh`
-
-### v2: Streaming-Capable Runtime Architecture
-
-TheClaw v2 upgrades the message flow from file-system-based process orchestration to in-memory/IPC service orchestration:
-
-**v1 Message Path (Process-based):**
-```
-xgw → thread push(CLI) → notifier dispatch(file polling) → agent run(CLI) 
-→ pai chat(CLI) → thread push(CLI) → outbound consumer → agent deliver(CLI) → xgw send(CLI)
-```
-Each arrow = process boundary, 6-8 process launches per message, no streaming possible.
-
-**v2 Message Path (IPC-based):**
+### Message Path (IPC-based):
 ```
 client → xgw(WebSocket) → xar daemon(IPC) → pai lib(streaming LLM) 
 → xar daemon(IPC) → xgw(WebSocket) → client
 ```
 Streaming-capable, in-process or IPC, no batch processing boundaries.
 
-### Component Architecture (v2)
+### Component Architecture
 
 ```
 ┌─────────────────────────────────────────────────────────┐
 │  LLM 工具层（CLI，给 LLM 的 bash_exec 调用）              │
-│  cmds  xdb  xweb  pai  thread(管理CLI)  agent(管理CLI)   │
+│  cmds  xdb  xweb  pai  thread(管理CLI)  xar(管理CLI)   │
 └─────────────────────────────────────────────────────────┘
          │ bash_exec
 ┌────────▼────────────────────────────────────────────────┐
@@ -149,9 +126,9 @@ theclaw setup [--profile <name|path>] [--reset]
 2. Load profile, interactively fill `${VAR}` placeholders
 3. Configure pai providers
 4. Initialize agents (admin → warden → maintainer → evolver)
-5. Start notifier daemon
+5. Start xar daemon
 6. Configure and start xgw
-7. Start agents (register inbox subscriptions)
+7. Start agents (register to xar daemon)
 8. Smoke test
 
 **Idempotency**: Repeated execution skips completed steps (unless `--reset`).
@@ -217,7 +194,7 @@ theclaw upgrade --provider local
 
 Install from npm registry:
 ```
-npm install -g @theclaw/<name>@<version>
+npm install -g @theclawlab/<name>@<version>
 ```
 
 **`local`**
@@ -229,7 +206,7 @@ cd ${THECLAW_SOURCE_ROOT}/<name> && npm run build && npm link
 
 ---
 
-## Component Transformation Roadmap (v2)
+## Component Transformation Record (v1 → v2, completed)
 
 ### pai — CLI/LIB Dual Interface Module
 
@@ -258,11 +235,9 @@ cd ${THECLAW_SOURCE_ROOT}/<name> && npm run build && npm link
 
 **LLM Value**: thread CLI preserved for advanced users and debugging.
 
-### xar — Agent Runtime Daemon (全新实现)
+### xar — Agent Runtime Daemon
 
 **Status**: ✅ Complete
-
-**Positioning**: New implementation from scratch, not refactored from old `agent` repo. Old `agent` repo kept as reference documentation, archived after xar stabilizes.
 
 **Responsibilities:**
 - In-memory event loop (replaces notifier file-polling-driven scheduling)
@@ -274,16 +249,12 @@ cd ${THECLAW_SOURCE_ROOT}/<name> && npm run build && npm link
 
 **External Interfaces:**
 - IPC Server (xgw communicates via this interface)
-- Management CLI (`agent` command for init/start/stop/status/list, for humans and LLM)
+- Management CLI (`xar` command for init/start/stop/status/list, for humans and LLM)
 
 **Streaming Support:**
 - xar holds LLM streaming write handle
 - Pushes tokens in real-time to xgw via IPC
 - xgw forwards via WebSocket to client
-
-**Naming:**
-- Development: repo named `xar` (x + agent runtime)
-- Stable: CLI command renamed to `agent`, old `agent` repo deprecated
 
 **Internal Architecture:**
 
@@ -313,7 +284,7 @@ xar/
 │   │   ├── run-loop.ts       # 消息处理循环（per-agent async，不同 agent 并发）
 │   │   ├── router.ts         # inbox 消息 → 目标 thread 路由
 │   │   ├── context.ts        # LLM context 构建（system prompt 组装）
-│   │   ├── memory.ts         # Session compact（对齐 agent repo compactor 逻辑）
+│   │   ├── memory.ts         # Session compact 逻辑
 │   │   ├── session.ts        # Session JSONL 读写、token 估算
 │   │   ├── queue.ts          # AsyncQueue<Message>（per-agent 内存消息队列）
 │   │   ├── thread-lib.ts     # thread lib 封装（open/init/exists）
@@ -406,17 +377,9 @@ Outbound: xar(IPC) → xgw(ws/webhook) → client
 
 **Positioning**: Foundation for LLM internet access, stable encapsulation unit, independent iteration.
 
-### agent (old repo) — Functionality Absorbed by xar, Archived
-
-**Status**: ✅ Deprecated, archived
-
-**No Refactoring**: Old `agent` repo design assumptions (notifier-driven, file-lock serial) differ too much from xar, refactoring more painful than rewrite.
-
-**Handling**: Archived deprecated (README marked DEPRECATED), kept as design reference. Old `agent` CLI commands (init/start/stop/status/list/chat/send) completely replaced by xar management CLI. `agent run` and `agent deliver` internalized into xar daemon run-loop and IPC delivery.
-
 ---
 
-## Streaming Complete Path (v2)
+## Streaming Complete Path
 
 ```
 User input
@@ -434,37 +397,42 @@ Each hop in-process or streaming-capable IPC, no batch processing boundaries.
 
 ---
 
-## xar IPC Protocol (Draft)
+## xar IPC Protocol
 
 xar exposes IPC Server supporting following operations:
 
 ### Connection Method
 
-Prefer Unix socket (`~/.theclaw/xar.sock`), fallback to local HTTP+WebSocket (`127.0.0.1:18792`).
+Prefer Unix socket (`~/.theclaw/xar.sock`), fallback to local TCP WebSocket (`127.0.0.1:18792`).
 
 ### Message Types
 
 **Inbound (xgw → xar):**
 ```json
-{ "type": "inbound_message", "agent_id": "admin", "message": { ...Message } }
+{ "type": "inbound_message", "agent_id": "admin", "message": { "source": "external:telegram:tg-main:dm:alice:alice", "content": "Hello" } }
 ```
 
 **Outbound streaming (xar → xgw):**
+
+一次 streaming 会话由 `stream_start` 开始，`stream_end` 或 `stream_error` 结束。中间的事件通过 `stream_id` 关联。
+
 ```json
-{ "type": "stream_start", "reply_context": { "channel_id": "...", "peer_id": "...", "session_id": "..." } }
-{ "type": "stream_token", "token": "Hello" }
-{ "type": "stream_token", "token": " world" }
-{ "type": "stream_end" }
+{ "type": "stream_start", "stream_id": "tg-main:alice", "target": { "channel_id": "tg-main", "peer_id": "alice", "conversation_id": "alice" } }
+{ "type": "stream_token", "stream_id": "tg-main:alice", "token": "Hello" }
+{ "type": "stream_thinking", "stream_id": "tg-main:alice", "delta": "..." }
+{ "type": "stream_tool_call", "stream_id": "tg-main:alice", "tool_call": { ... } }
+{ "type": "stream_tool_result", "stream_id": "tg-main:alice", "tool_result": { ... } }
+{ "type": "stream_end", "stream_id": "tg-main:alice" }
+{ "type": "stream_error", "stream_id": "tg-main:alice", "error": "..." }
 ```
+
+`stream_start` 是唯一携带 `target`（OutboundTarget）的事件。完整的出站事件类型列表见 [ARCH.md](./ARCH.md#出站协议)。
 
 **Management operations (CLI → xar):**
 ```json
-{ "type": "agent_init", "agent_id": "admin", "kind": "system" }
 { "type": "agent_start", "agent_id": "admin" }
 { "type": "agent_stop", "agent_id": "admin" }
 { "type": "agent_status", "agent_id": "admin" }
-{ "type": "task_add", "author": "...", "task_id": "...", "command": "..." }
-{ "type": "timer_add", "author": "...", "task_id": "...", "timer": "0 2 * * *", "command": "..." }
 ```
 
 ---
@@ -479,7 +447,7 @@ TheClaw manages only its own config, doesn't intrude into component config space
 | profile record | `~/.config/theclaw/config.json` | theclaw |
 | pai config | `~/.config/pai/default.json` | pai (theclaw writes via `pai model config` during setup) |
 | xgw config | `~/.config/xgw/config.yaml` | xgw (theclaw writes directly during setup) |
-| agent config | `~/.theclaw/agents/<id>/config.yaml` | agent (theclaw writes via `agent init` during setup) |
+| agent config | `~/.theclaw/agents/<id>/config.json` | xar (theclaw writes via `xar init` during setup) |
 | notifier data | `~/.local/share/notifier/` | notifier |
 
 `~/.config/theclaw/config.json` content:
@@ -488,8 +456,7 @@ TheClaw manages only its own config, doesn't intrude into component config space
 {
   "schema_version": "1",
   "profile": "standard",
-  "setup_completed_at": "2026-03-20T10:00:00Z",
-  "components_yaml_path": "/usr/lib/node_modules/theclaw/components.yaml"
+  "setup_completed_at": "2026-03-20T10:00:00Z"
 }
 ```
 
@@ -567,9 +534,7 @@ TheClaw doesn't need SQLite, better-sqlite3 or heavy dependencies. It's a lightw
 
 ## Immutable Principles
 
-Following principles maintained in v2:
-
-1. **LLM tool interface all CLI**: `cmds`, `xdb`, `xweb`, `pai`, `thread` (management), `agent` (management), `notifier` (scheduling) all remain CLI form, LLM calls via single `bash_exec` tool
+1. **LLM tool interface all CLI**: `cmds`, `xdb`, `xweb`, `pai`, `thread` (management), `xar` (management), `notifier` (scheduling) all remain CLI form, LLM calls via single `bash_exec` tool
 2. **Agent as directory**: Each agent's data in `~/.theclaw/agents/<id>/`, filesystem is ground truth
 3. **Thread first-class citizen**: Event stream, persistent memory, observability foundation unchanged
 4. **Observability first**: All thread data human-readable (SQLite + JSONL), not black box despite runtime consolidation
@@ -588,12 +553,10 @@ Following principles maintained in v2:
 | cmds | Keep current | ✅ Unchanged | — | — | ✅ |
 | xdb | Keep current | ✅ Unchanged | — | — | ✅ |
 | xweb | Keep current | ✅ Unchanged | — | — | ✅ |
-| agent (old) | Archive | ✅ Deprecated | — | — | ✅ |
 
 ---
 
 ## See Also
 
+- [ARCH.md](./ARCH.md) — Complete architecture design (concept model, gateway routing, session design, bootstrap)
 - [CLI-LIB-Module-Spec.md](./CLI-LIB-Module-Spec.md) — Dual interface module specification (cross-repo design pattern)
-- [BootstrapDesign.md](./arch/BootstrapDesign.md) — Detailed setup flow and idempotency rules
-- [TheClawArchitecture.md](./arch/TheClawArchitecture.md) — Historical architecture reference
