@@ -130,7 +130,7 @@ function makeXgwMessage(overrides: Record<string, unknown> = {}) {
     channel_id: 'tg-channel-1',
     peer_id: 'user42',
     peer_name: 'Test User',
-    session_id: 'sess-1',
+    conversation_id: 'sess-1',
     text: 'Hello from xgw',
     attachments: [],
     reply_to: null,
@@ -142,15 +142,8 @@ function makeXgwMessage(overrides: Record<string, unknown> = {}) {
 
 function makeInboundMessage(overrides: Partial<InboundMessage> = {}): InboundMessage {
   return {
-    source: 'peer:user42',
+    source: 'external:telegram:main:dm:user42:user42',
     content: 'Hello from xgw',
-    reply_context: {
-      channel_type: 'external',
-      channel_id: 'telegram',
-      session_type: 'dm',
-      session_id: 'sess-1',
-      peer_id: 'user42',
-    },
     ...overrides,
   }
 }
@@ -217,13 +210,13 @@ describe('xgw InboxWriter — thread push contract', () => {
 
   it('passes --source with correct external format', async () => {
     const writer = new InboxWriter()
-    const msg = makeXgwMessage({ channel_id: 'tg-ch', session_id: 'sess-99', peer_id: 'user42' })
+    const msg = makeXgwMessage({ channel_id: 'tg-ch', conversation_id: 'conv-99', peer_id: 'user42' })
     await writer.push('agent-1', msg, 'telegram', { 'agent-1': { inbox: '/tmp/inbox' } })
 
     const [, args] = mockXgwExecCommand.mock.calls[0] as [string, string[]]
     const idx = args.indexOf('--source')
     expect(idx).toBeGreaterThanOrEqual(0)
-    expect(args[idx + 1]).toBe('external:telegram:tg-ch:dm:sess-99:user42')
+    expect(args[idx + 1]).toBe('external:telegram:tg-ch:dm:conv-99:user42')
   })
 
   it('passes --type "message"', async () => {
@@ -319,7 +312,7 @@ describe('xar RunLoopImpl — message processing pipeline', () => {
     expect(streamEnd).toBeDefined()
   })
 
-  it('stream_start includes reply_context', async () => {
+  it('stream_start includes target', async () => {
     const { conn, sent } = makeMockIpcConnection()
     const queue = new AsyncQueueImpl<InboundMessage>()
     const runLoop = new RunLoopImpl('pipeline-bot', queue, new Map([['conn-1', conn]]))
@@ -330,8 +323,8 @@ describe('xar RunLoopImpl — message processing pipeline', () => {
     await runPromise
 
     const streamStart = sent.find(m => m.type === 'stream_start')
-    expect(streamStart?.reply_context).toMatchObject({
-      channel_id: 'telegram',
+    expect(streamStart?.target).toMatchObject({
+      channel_id: 'telegram:main',
       peer_id: 'user42',
     })
   })

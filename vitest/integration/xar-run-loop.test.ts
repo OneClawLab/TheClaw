@@ -110,15 +110,8 @@ import type { InboundMessage, IpcMessage } from '../../../xar/src/types.js'
 
 function makeMsg(overrides: Partial<InboundMessage> = {}): InboundMessage {
   return {
-    source: 'peer:user42',
+    source: 'external:telegram:main:dm:user42:user42',
     content: 'Hello agent',
-    reply_context: {
-      channel_type: 'external',
-      channel_id: 'telegram',
-      session_type: 'dm',
-      session_id: 'sess-1',
-      peer_id: 'user42',
-    },
     ...overrides,
   }
 }
@@ -182,13 +175,13 @@ describe('Requirement 7.1 — RunLoop routes inbound message to thread', () => {
     )
   })
 
-  it('routes per-peer source to peer-<id> thread', async () => {
+  it('routes per-peer source to peers/<id> thread', async () => {
     const { openOrCreateThread } = await import('../../../xar/src/agent/thread-lib.js')
-    await runWithMessage(makeMsg({ source: 'peer:alice' }))
+    await runWithMessage(makeMsg({ source: 'external:telegram:main:dm:alice:alice' }))
     // openOrCreateThread is called with agentId and threadId
     const [agentId, threadId] = vi.mocked(openOrCreateThread).mock.calls[0] as [string, string]
     expect(agentId).toBe('bot')
-    expect(threadId).toBe('peer-alice')
+    expect(threadId).toBe('peers/alice')
   })
 
   it('does not process messages after stop()', async () => {
@@ -270,13 +263,13 @@ describe('Requirement 7.3 — RunLoop streams reply via IPC Deliver', () => {
     if (tokenIdx >= 0) expect(endIdx).toBeGreaterThan(tokenIdx)
   })
 
-  it('stream_start carries reply_context with channel_id and peer_id', async () => {
+  it('stream_start carries target with channel_id and peer_id', async () => {
     const mock = makeMockConn()
     await runWithMessage(makeMsg(), mock)
 
     const streamStart = mock.sent.find(m => m.type === 'stream_start')
-    expect(streamStart?.reply_context).toMatchObject({
-      channel_id: 'telegram',
+    expect(streamStart?.target).toMatchObject({
+      channel_id: 'telegram:main',
       peer_id: 'user42',
     })
   })

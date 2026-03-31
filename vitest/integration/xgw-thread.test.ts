@@ -36,7 +36,7 @@ function makeMessage(overrides?: Partial<Message>): Message {
     channel_id: 'telegram',
     peer_id: 'user42',
     peer_name: 'Test User',
-    session_id: 'sess-1',
+    conversation_id: 'sess-1',
     text: 'Hello',
     attachments: [],
     reply_to: null,
@@ -98,7 +98,7 @@ describe('Requirement 6.1 — InboxWriter.push calls thread push with correct ar
 
   it('passes --source with the formatted source string', async () => {
     const writer = new InboxWriter()
-    const msg = makeMessage({ channel_id: 'tg-123', session_id: 'sess-abc', peer_id: 'peer-99' })
+    const msg = makeMessage({ channel_id: 'tg-123', conversation_id: 'conv-abc', peer_id: 'peer-99' })
     const agentsConfig = makeAgentsConfig('agent-1', '/tmp/inbox')
 
     await writer.push('agent-1', msg, 'telegram', agentsConfig)
@@ -106,7 +106,7 @@ describe('Requirement 6.1 — InboxWriter.push calls thread push with correct ar
     const [, args] = mockExecCommand.mock.calls[0] as [string, string[]]
     const idx = args.indexOf('--source')
     expect(idx).toBeGreaterThanOrEqual(0)
-    expect(args[idx + 1]).toBe('external:telegram:tg-123:dm:sess-abc:peer-99')
+    expect(args[idx + 1]).toBe('external:telegram:tg-123:dm:conv-abc:peer-99')
   })
 
   it('passes --type with value "message"', async () => {
@@ -141,12 +141,12 @@ describe('Requirement 6.1 — InboxWriter.push calls thread push with correct ar
 
 // ── Requirement 6.2: source field format ─────────────────────────────────────
 
-describe('Requirement 6.2 — source field format is external:<channelType>:<channelId>:dm:<sessionId>:<peerId>', () => {
+describe('Requirement 6.2 — source field format is external:<channelType>:<channelId>:dm:<conversationId>:<peerId>', () => {
   it('formats source correctly for telegram channel', async () => {
     const writer = new InboxWriter()
     const msg = makeMessage({
       channel_id: 'tg-channel-1',
-      session_id: 'session-xyz',
+      conversation_id: 'conv-xyz',
       peer_id: 'peer-123',
     })
     const agentsConfig = makeAgentsConfig('agent-1', '/tmp/inbox')
@@ -157,14 +157,14 @@ describe('Requirement 6.2 — source field format is external:<channelType>:<cha
     const sourceIdx = args.indexOf('--source')
     const source = args[sourceIdx + 1] as string
 
-    expect(source).toBe('external:telegram:tg-channel-1:dm:session-xyz:peer-123')
+    expect(source).toBe('external:telegram:tg-channel-1:dm:conv-xyz:peer-123')
   })
 
   it('formats source correctly for a different channel type', async () => {
     const writer = new InboxWriter()
     const msg = makeMessage({
       channel_id: 'slack-C001',
-      session_id: 'sess-001',
+      conversation_id: 'conv-001',
       peer_id: 'U001',
     })
     const agentsConfig = makeAgentsConfig('agent-1', '/tmp/inbox')
@@ -175,7 +175,7 @@ describe('Requirement 6.2 — source field format is external:<channelType>:<cha
     const sourceIdx = args.indexOf('--source')
     const source = args[sourceIdx + 1] as string
 
-    expect(source).toMatch(/^external:slack:slack-C001:dm:sess-001:U001$/)
+    expect(source).toMatch(/^external:slack:slack-C001:dm:conv-001:U001$/)
   })
 
   it('source has exactly 6 colon-separated parts', async () => {
