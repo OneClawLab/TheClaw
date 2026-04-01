@@ -315,7 +315,7 @@ assert_contains "delivered"
 echo "  Waiting for agent A to process message..."
 AGENT_A_THREAD_DIR="$AGENT_A_DIR/threads"
 wait_for "agent A reply in thread" 60 \
-  '$THREAD info --thread "$AGENT_A_THREAD_DIR/peers/cli" --json 2>/dev/null | grep -q "event_count"' \
+  '$THREAD peek --thread "$AGENT_A_THREAD_DIR/peers/cli" --last-event-id 0 2>/dev/null | grep -q "self"' \
   -- "tail -20 $AGENT_A_DIR/logs/agent.log 2>/dev/null || echo 'no agent log yet'"
 
 # Verify thread has events (user message + assistant reply)
@@ -363,7 +363,7 @@ assert_exit0
 echo "  Waiting for agent B to process message..."
 AGENT_B_THREAD_DIR="$AGENT_B_DIR/threads"
 wait_for "agent B reply in thread" 60 \
-  '$THREAD info --thread "$AGENT_B_THREAD_DIR/peers/cli" --json 2>/dev/null | grep -q "event_count"' \
+  '$THREAD peek --thread "$AGENT_B_THREAD_DIR/peers/cli" --last-event-id 0 2>/dev/null | grep -q "self"' \
   -- "tail -20 $AGENT_B_DIR/logs/agent.log 2>/dev/null || echo 'no agent log yet'"
 
 # Verify agent B replied
