@@ -45,7 +45,7 @@ Streaming-capable, in-process or IPC, no batch processing boundaries.
 │  ├── Thread 存储（SQLite lib，替代 thread CLI 调用）       │
 │  ├── Agent Run-loop（内存调度，替代 notifier 文件轮询）    │
 │  ├── LLM 调用（pai lib，替代 pai CLI 调用）               │
-│  └── IPC Server（Unix socket / local HTTP+WS）           │
+│  └── IPC Server（local TCP WebSocket）           │
 └────────┬────────────────────────────────────────────────┘
          │ IPC（streaming-capable）
 ┌────────▼────────────────────────────────────────────────┐
@@ -291,7 +291,7 @@ xar/
 │   │   ├── deliver.ts        # 出站投递（通过 IPC → xgw）
 │   │   └── types.ts
 │   ├── ipc/
-│   │   ├── server.ts         # createIpcServer()（WebSocket over Unix socket + TCP fallback）
+│   │   ├── server.ts         # createIpcServer()（WebSocket over TCP loopback）
 │   │   ├── client.ts         # IpcClient（CLI 命令用）
 │   │   └── types.ts
 │   └── repo-utils/           # 跨 repo 共通工具（从 pai 同步）
@@ -403,7 +403,7 @@ xar exposes IPC Server supporting following operations:
 
 ### Connection Method
 
-Prefer Unix socket (`~/.theclaw/xar.sock`), fallback to local TCP WebSocket (`127.0.0.1:18792`).
+Connect via TCP loopback (`127.0.0.1:18792`).
 
 ### Message Types
 

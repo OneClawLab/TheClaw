@@ -81,7 +81,7 @@ TheClaw 是一个多 agent 系统，由 8 个独立组件组成，每个组件�
               notifier
 ```
 
-xar 和 xgw 是两个独立的 daemon 进程，通过 IPC（WebSocket over Unix socket）通信。xar import pai 和 thread 作为 library；agent 通过 bash_exec 调用 cmds、xweb、xdb、notifier 等 CLI 工具。xgw 不 import 任何其他组件，只通过 IPC 与 xar 交互。
+xar 和 xgw 是两个独立的 daemon 进程，通过 IPC（WebSocket over TCP loopback）通信。xar import pai 和 thread 作为 library；agent 通过 bash_exec 调用 cmds、xweb、xdb、notifier 等 CLI 工具。xgw 不 import 任何其他组件，只通过 IPC 与 xar 交互。
 
 ### 端到端数据流
 
@@ -368,8 +368,7 @@ interface SendParams {
 
 xgw 与 xar 之间通过持久 WebSocket 连接通信：
 
-- 主连接：Unix socket（`~/.theclaw/xar.sock`）
-- 备用连接：TCP loopback（`127.0.0.1:18792`）
+- 连接方式：TCP loopback（`127.0.0.1:18792`）
 - 自动重连：断线后指数退避重连（3s → 60s 上限）
 - 入站缓冲：xar 不可用时，xgw 在内存中缓冲最多 100 条入站消息，重连后按序发送
 
@@ -809,6 +808,5 @@ defaults:
 
 | 用途 | 类型 | 地址 | 说明 |
 |------|------|------|------|
-| xar IPC（主） | Unix socket | `~/.theclaw/xar.sock` | xgw ↔ xar 内部通信 |
-| xar IPC（备用） | TCP | `127.0.0.1:18792` | Unix socket 不可用时的 fallback |
+| xar IPC | TCP | `127.0.0.1:18792` | xgw ↔ xar 内部通信 |
 | xgw gateway | TCP | `127.0.0.1:18790` | xgw 对外服务端口（WebSocket/HTTP，供 TUI 等客户端连接） |
