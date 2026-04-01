@@ -416,7 +416,7 @@ assert_file_exists "$AGENT_A_THREAD_DIR/peers/cli/events.jsonl" "events.jsonl"
 section "Phase 15: Session file"
 
 # Session JSONL should exist for the CLI thread
-SESS_FILE="$AGENT_A_DIR/sessions/peer-cli.jsonl"
+SESS_FILE="$AGENT_A_DIR/sessions/peers/cli.jsonl"
 assert_file_exists "$SESS_FILE" "session JSONL"
 
 # ══════════════════════════════════════════════════════════════
