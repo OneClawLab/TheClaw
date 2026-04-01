@@ -9,7 +9,7 @@
 #   - xar daemon lifecycle (start/stop/status)
 #   - Agent lifecycle (init/start/stop/status/list)
 #   - xgw config & daemon lifecycle
-#   - Full message path: xar send → agent processing → LLM → streaming reply
+#   - Full message path: xar send -> agent processing -> LLM -> streaming reply
 #   - Multi-agent routing & isolation
 #   - Multi-turn conversation with context retention
 #   - Thread persistence & event verification
@@ -44,6 +44,17 @@ AGENT_B_DIR="${THECLAW_HOME_ORIG}/agents/${AGENT_B}"
 XGW_CFG=""  # set after setup_e2e
 X=""        # xgw with --config, set after setup_e2e
 
+# Force-kill any process holding a port (Windows-compatible)
+force_kill_port() {
+  local port=$1
+  local pid
+  pid=$(netstat -ano 2>/dev/null | grep ":${port}.*LISTENING" | awk '{print $NF}' | head -1)
+  if [[ -n "$pid" && "$pid" != "0" ]]; then
+    taskkill //F //PID "$pid" >/dev/null 2>&1 || kill -9 "$pid" 2>/dev/null || true
+    sleep 1
+  fi
+}
+
 on_cleanup() {
   # Stop agents
   $XAR stop "$AGENT_A" 2>/dev/null || true
@@ -52,7 +63,10 @@ on_cleanup() {
   # Stop daemons
   $XGW --config "$XGW_CFG" stop 2>/dev/null || true
   $XAR daemon stop 2>/dev/null || true
-  sleep 1
+  sleep 2
+  # Force-kill leftover xar daemon if port still held
+  force_kill_port 18792
+  rm -f "${THECLAW_HOME_ORIG}/xar.pid" "${THECLAW_HOME_ORIG}/xar.sock" 2>/dev/null || true
   # Remove test agents
   rm -rf "$AGENT_A_DIR" "$AGENT_B_DIR"
 }
@@ -95,6 +109,8 @@ pass "Default LLM provider: $PROVIDER"
 # Ensure no stale daemons from previous runs
 $XAR daemon stop 2>/dev/null || true
 sleep 1
+force_kill_port 18792
+rm -f "${THECLAW_HOME_ORIG}/xar.pid" "${THECLAW_HOME_ORIG}/xar.sock" 2>/dev/null || true
 
 # ══════════════════════════════════════════════════════════════
 # Phase 1: theclaw CLI basics
@@ -255,6 +271,7 @@ assert_contains "running"
 section "Phase 8: Start non-existent agent"
 run_cmd $XAR start "no-such-agent-${RUN_ID}"
 assert_exit 1
+
 # ══════════════════════════════════════════════════════════════
 # Phase 9: xgw config & lifecycle
 # ══════════════════════════════════════════════════════════════
@@ -289,6 +306,7 @@ assert_exit0
 # ══════════════════════════════════════════════════════════════
 section "Phase 10: Single-turn chat — agent A"
 
+# Send a simple message and wait for the agent to process it
 run_cmd $XAR send "$AGENT_A" "Reply with exactly the word PONG and nothing else"
 assert_exit0
 assert_contains "delivered"
@@ -311,6 +329,7 @@ assert_contains "PONG\|pong\|self"
 # ══════════════════════════════════════════════════════════════
 section "Phase 11: Multi-turn — send code to remember"
 
+# Send code for agent to remember
 run_cmd $XAR send "$AGENT_A" "Remember this secret code: ZETA-8832. Just confirm you got it."
 assert_exit0
 
@@ -319,6 +338,7 @@ sleep 15
 
 section "Phase 11: Multi-turn — recall the code"
 
+# Ask agent to recall the code
 run_cmd $XAR send "$AGENT_A" "What was the secret code I told you? Reply with just the code."
 assert_exit0
 
@@ -336,6 +356,7 @@ assert_contains "ZETA-8832"
 # ══════════════════════════════════════════════════════════════
 section "Phase 12: Multi-agent isolation — send to agent B"
 
+# Send to agent B — should have independent context
 run_cmd $XAR send "$AGENT_B" "Reply with exactly the word HELLO and nothing else"
 assert_exit0
 
@@ -345,6 +366,7 @@ wait_for "agent B reply in thread" 60 \
   '$THREAD info --thread "$AGENT_B_THREAD_DIR/peers/cli" --json 2>/dev/null | grep -q "event_count"' \
   -- "tail -20 $AGENT_B_DIR/logs/agent.log 2>/dev/null || echo 'no agent log yet'"
 
+# Verify agent B replied
 run_cmd $THREAD peek --thread "$AGENT_B_THREAD_DIR/peers/cli" --last-event-id 0
 assert_exit0
 assert_line_count_gte 2
@@ -358,6 +380,7 @@ assert_not_contains "ZETA-8832"
 # ══════════════════════════════════════════════════════════════
 section "Phase 13: Tool calling — bash_exec"
 
+# Send a message requiring tool use
 run_cmd $XAR send "$AGENT_A" "Use the bash_exec tool to run: echo E2E_TOOL_OK. Then reply with the exact output."
 assert_exit0
 
@@ -374,6 +397,7 @@ assert_contains "E2E_TOOL_OK"
 # ══════════════════════════════════════════════════════════════
 section "Phase 14: Thread persistence"
 
+# Thread info should show accumulated events
 run_cmd $THREAD info --thread "$AGENT_A_THREAD_DIR/peers/cli"
 assert_exit0
 assert_nonempty
@@ -391,6 +415,7 @@ assert_file_exists "$AGENT_A_THREAD_DIR/peers/cli/events.jsonl" "events.jsonl"
 # ══════════════════════════════════════════════════════════════
 section "Phase 15: Session file"
 
+# Session JSONL should exist for the CLI thread
 SESS_FILE="$AGENT_A_DIR/sessions/peer-cli.jsonl"
 assert_file_exists "$SESS_FILE" "session JSONL"
 
@@ -461,12 +486,14 @@ assert_contains "running"
 # ══════════════════════════════════════════════════════════════
 section "Phase 19: Post-restart — context retained"
 
+# Ask agent A to recall code after restart
 run_cmd $XAR send "$AGENT_A" "What was the secret code I told you earlier? Reply with just the code."
 assert_exit0
 
 echo "  Waiting for agent A to process post-restart query..."
 sleep 20
 
+# Verify code still in thread
 run_cmd $THREAD peek --thread "$AGENT_A_THREAD_DIR/peers/cli" --last-event-id 0
 assert_exit0
 assert_contains "ZETA-8832"
