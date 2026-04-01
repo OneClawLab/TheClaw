@@ -79,17 +79,17 @@ vi.mock('../../../xar/src/agent/memory.js', () => ({
 
 // pai library
 vi.mock('pai', () => ({
-  loadConfig: vi.fn().mockResolvedValue({ defaultProvider: 'openai', providers: [{ name: 'openai', apiKey: 'sk-test', defaultModel: 'gpt-4' }] }),
-  resolveProvider: vi.fn().mockResolvedValue({ provider: { name: 'openai', defaultModel: 'gpt-4' }, apiKey: 'sk-test' }),
-  createBashExecTool: vi.fn().mockReturnValue({ name: 'bash_exec', description: 'Run bash', parameters: {}, handler: vi.fn() }),
-  chat: vi.fn(async function* (_input: unknown, _config: unknown, chunkWriter: any) {
-    // Write tokens as strings with explicit encoding so IpcChunkWriter sends stream_token IPC messages
-    if (chunkWriter && typeof chunkWriter.write === 'function') {
-      await new Promise<void>((resolve) => chunkWriter.write('Hello ', 'utf8', resolve))
-      await new Promise<void>((resolve) => chunkWriter.write('world', 'utf8', resolve))
-    }
-    yield { type: 'chat_end', newMessages: [{ role: 'assistant', content: 'Hello world' }] }
+  initPai: vi.fn().mockResolvedValue({
+    chat: vi.fn(async function* (_input: unknown, _opts: unknown, chunkWriter: any) {
+      if (chunkWriter && typeof chunkWriter.write === 'function') {
+        await new Promise<void>((resolve) => chunkWriter.write('Hello ', 'utf8', resolve))
+        await new Promise<void>((resolve) => chunkWriter.write('world', 'utf8', resolve))
+      }
+      yield { type: 'chat_end', newMessages: [{ role: 'assistant', content: 'Hello world' }] }
+    }),
+    getProviderInfo: vi.fn().mockResolvedValue({ name: 'openai', defaultModel: 'gpt-4', contextWindow: 128000, maxTokens: 4096 }),
   }),
+  createBashExecTool: vi.fn().mockReturnValue({ name: 'bash_exec', description: 'Run bash', parameters: {}, handler: vi.fn() }),
 }))
 
 // xar logging — silent
@@ -121,6 +121,7 @@ import { RunLoopImpl } from '../../../xar/src/agent/run-loop.js'
 import { AsyncQueueImpl } from '../../../xar/src/agent/queue.js'
 import type { InboundMessage } from '../../../xar/src/types.js'
 import type { IpcMessage } from '../../../xar/src/types.js'
+import type { Pai } from 'pai'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -157,6 +158,20 @@ function makeMockIpcConnection() {
       close: vi.fn(),
     },
     sent,
+  }
+}
+
+function makeMockPai(chatOverride?: (...args: unknown[]) => AsyncGenerator<unknown>): Pai {
+  const defaultChat = async function* (_input: unknown, _opts: unknown, chunkWriter: any) {
+    if (chunkWriter && typeof chunkWriter.write === 'function') {
+      await new Promise<void>((resolve) => chunkWriter.write('Hello ', 'utf8', resolve))
+      await new Promise<void>((resolve) => chunkWriter.write('world', 'utf8', resolve))
+    }
+    yield { type: 'chat_end', newMessages: [{ role: 'assistant', content: 'Hello world' }] }
+  }
+  return {
+    chat: (chatOverride ?? defaultChat) as Pai['chat'],
+    getProviderInfo: vi.fn().mockResolvedValue({ name: 'openai', defaultModel: 'gpt-4', contextWindow: 128000, maxTokens: 4096 }),
   }
 }
 
@@ -259,7 +274,7 @@ describe('xar RunLoopImpl — message processing pipeline', () => {
 
     const { conn } = makeMockIpcConnection()
     const queue = new AsyncQueueImpl<InboundMessage>()
-    const runLoop = new RunLoopImpl('pipeline-bot', queue, new Map([['conn-1', conn]]))
+    const runLoop = new RunLoopImpl('pipeline-bot', queue, new Map([['conn-1', conn]]), makeMockPai())
 
     const runPromise = runLoop.start()
     queue.push(makeInboundMessage())
@@ -272,7 +287,7 @@ describe('xar RunLoopImpl — message processing pipeline', () => {
   it('pushes inbound message to thread store', async () => {
     const { conn } = makeMockIpcConnection()
     const queue = new AsyncQueueImpl<InboundMessage>()
-    const runLoop = new RunLoopImpl('pipeline-bot', queue, new Map([['conn-1', conn]]))
+    const runLoop = new RunLoopImpl('pipeline-bot', queue, new Map([['conn-1', conn]]), makeMockPai())
 
     const runPromise = runLoop.start()
     queue.push(makeInboundMessage({ content: 'Test message' }))
@@ -287,7 +302,7 @@ describe('xar RunLoopImpl — message processing pipeline', () => {
   it('sends stream_start IPC message before LLM call', async () => {
     const { conn, sent } = makeMockIpcConnection()
     const queue = new AsyncQueueImpl<InboundMessage>()
-    const runLoop = new RunLoopImpl('pipeline-bot', queue, new Map([['conn-1', conn]]))
+    const runLoop = new RunLoopImpl('pipeline-bot', queue, new Map([['conn-1', conn]]), makeMockPai())
 
     const runPromise = runLoop.start()
     queue.push(makeInboundMessage())
@@ -301,7 +316,7 @@ describe('xar RunLoopImpl — message processing pipeline', () => {
   it('sends stream_end IPC message after LLM call completes', async () => {
     const { conn, sent } = makeMockIpcConnection()
     const queue = new AsyncQueueImpl<InboundMessage>()
-    const runLoop = new RunLoopImpl('pipeline-bot', queue, new Map([['conn-1', conn]]))
+    const runLoop = new RunLoopImpl('pipeline-bot', queue, new Map([['conn-1', conn]]), makeMockPai())
 
     const runPromise = runLoop.start()
     queue.push(makeInboundMessage())
@@ -315,7 +330,7 @@ describe('xar RunLoopImpl — message processing pipeline', () => {
   it('stream_start includes target', async () => {
     const { conn, sent } = makeMockIpcConnection()
     const queue = new AsyncQueueImpl<InboundMessage>()
-    const runLoop = new RunLoopImpl('pipeline-bot', queue, new Map([['conn-1', conn]]))
+    const runLoop = new RunLoopImpl('pipeline-bot', queue, new Map([['conn-1', conn]]), makeMockPai())
 
     const runPromise = runLoop.start()
     queue.push(makeInboundMessage())
@@ -332,7 +347,7 @@ describe('xar RunLoopImpl — message processing pipeline', () => {
   it('writes LLM response records to thread via pushBatch', async () => {
     const { conn } = makeMockIpcConnection()
     const queue = new AsyncQueueImpl<InboundMessage>()
-    const runLoop = new RunLoopImpl('pipeline-bot', queue, new Map([['conn-1', conn]]))
+    const runLoop = new RunLoopImpl('pipeline-bot', queue, new Map([['conn-1', conn]]), makeMockPai())
 
     const runPromise = runLoop.start()
     queue.push(makeInboundMessage())
@@ -347,7 +362,7 @@ describe('xar RunLoopImpl — message processing pipeline', () => {
   it('sends stream_token IPC messages for each LLM chunk', async () => {
     const { conn, sent } = makeMockIpcConnection()
     const queue = new AsyncQueueImpl<InboundMessage>()
-    const runLoop = new RunLoopImpl('pipeline-bot', queue, new Map([['conn-1', conn]]))
+    const runLoop = new RunLoopImpl('pipeline-bot', queue, new Map([['conn-1', conn]]), makeMockPai())
 
     const runPromise = runLoop.start()
     queue.push(makeInboundMessage())
@@ -361,7 +376,7 @@ describe('xar RunLoopImpl — message processing pipeline', () => {
   it('processes multiple messages sequentially', async () => {
     const { conn } = makeMockIpcConnection()
     const queue = new AsyncQueueImpl<InboundMessage>()
-    const runLoop = new RunLoopImpl('pipeline-bot', queue, new Map([['conn-1', conn]]))
+    const runLoop = new RunLoopImpl('pipeline-bot', queue, new Map([['conn-1', conn]]), makeMockPai())
 
     const runPromise = runLoop.start()
     queue.push(makeInboundMessage({ content: 'msg-1' }))
@@ -374,14 +389,13 @@ describe('xar RunLoopImpl — message processing pipeline', () => {
   })
 
   it('sends stream_error when LLM call fails non-retryably', async () => {
-    const { chat } = await import('pai')
-    vi.mocked(chat).mockImplementationOnce(async function* () {
+    const failPai = makeMockPai(async function* () {
       throw new Error('auth failed')
     })
 
     const { conn, sent } = makeMockIpcConnection()
     const queue = new AsyncQueueImpl<InboundMessage>()
-    const runLoop = new RunLoopImpl('pipeline-bot', queue, new Map([['conn-1', conn]]))
+    const runLoop = new RunLoopImpl('pipeline-bot', queue, new Map([['conn-1', conn]]), failPai)
 
     const runPromise = runLoop.start()
     queue.push(makeInboundMessage())

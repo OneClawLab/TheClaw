@@ -76,10 +76,11 @@ vi.mock('../../../xar/src/agent/memory.js', () => ({
 }))
 
 vi.mock('pai', () => ({
-  loadConfig: vi.fn().mockResolvedValue({ defaultProvider: 'openai', providers: [{ name: 'openai', apiKey: 'sk-test', defaultModel: 'gpt-4' }] }),
-  resolveProvider: vi.fn().mockResolvedValue({ provider: { name: 'openai', defaultModel: 'gpt-4' }, apiKey: 'sk-test' }),
+  initPai: vi.fn().mockResolvedValue({
+    chat: mockChat,
+    getProviderInfo: vi.fn().mockResolvedValue({ name: 'openai', defaultModel: 'gpt-4', contextWindow: 128000, maxTokens: 4096 }),
+  }),
   createBashExecTool: vi.fn().mockReturnValue({ name: 'bash_exec', description: 'Run bash', parameters: {}, handler: vi.fn() }),
-  chat: mockChat,
 }))
 
 vi.mock('../../../xar/src/logging.js', () => ({
@@ -105,6 +106,7 @@ vi.mock('../../../xar/src/config.js', () => ({
 import { RunLoopImpl } from '../../../xar/src/agent/run-loop.js'
 import { AsyncQueueImpl } from '../../../xar/src/agent/queue.js'
 import type { InboundMessage, IpcMessage } from '../../../xar/src/types.js'
+import type { Pai } from 'pai'
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -128,10 +130,17 @@ function makeMockConn() {
   }
 }
 
+function makeMockPai(): Pai {
+  return {
+    chat: mockChat as unknown as Pai['chat'],
+    getProviderInfo: vi.fn().mockResolvedValue({ name: 'openai', defaultModel: 'gpt-4', contextWindow: 128000, maxTokens: 4096 }),
+  }
+}
+
 async function runWithMessage(msg: InboundMessage, connOverride?: ReturnType<typeof makeMockConn>) {
   const { conn, sent } = connOverride ?? makeMockConn()
   const queue = new AsyncQueueImpl<InboundMessage>()
-  const runLoop = new RunLoopImpl('bot', queue, new Map([['conn-1', conn]]))
+  const runLoop = new RunLoopImpl('bot', queue, new Map([['conn-1', conn]]), makeMockPai())
   const runPromise = runLoop.start()
   queue.push(msg)
   queue.close()
@@ -187,7 +196,7 @@ describe('Requirement 7.1 — RunLoop routes inbound message to thread', () => {
   it('does not process messages after stop()', async () => {
     const { conn } = makeMockConn()
     const queue = new AsyncQueueImpl<InboundMessage>()
-    const runLoop = new RunLoopImpl('bot', queue, new Map([['conn-1', conn]]))
+    const runLoop = new RunLoopImpl('bot', queue, new Map([['conn-1', conn]]), makeMockPai())
 
     const runPromise = runLoop.start()
     await runLoop.stop()
@@ -208,7 +217,7 @@ describe('Requirement 7.2 — RunLoop calls pai.chat() with correct config', () 
   it('does NOT call pai.chat() when queue is empty', async () => {
     const { conn } = makeMockConn()
     const queue = new AsyncQueueImpl<InboundMessage>()
-    const runLoop = new RunLoopImpl('bot', queue, new Map([['conn-1', conn]]))
+    const runLoop = new RunLoopImpl('bot', queue, new Map([['conn-1', conn]]), makeMockPai())
     const runPromise = runLoop.start()
     queue.close()
     await runPromise
@@ -320,7 +329,7 @@ describe('Requirement 7.4 — RunLoop handles LLM errors gracefully', () => {
 
     const { conn } = makeMockConn()
     const queue = new AsyncQueueImpl<InboundMessage>()
-    const runLoop = new RunLoopImpl('bot', queue, new Map([['conn-1', conn]]))
+    const runLoop = new RunLoopImpl('bot', queue, new Map([['conn-1', conn]]), makeMockPai())
     const runPromise = runLoop.start()
     queue.push(makeMsg({ content: 'msg-1' }))
     queue.push(makeMsg({ content: 'msg-2' }))
