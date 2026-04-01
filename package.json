@@ -1,6 +1,6 @@
 {
   "name": "@theclawlab/theclaw",
-  "version": "2.0.1",
+  "version": "2.1.0",
   "description": "TheClaw setup and config CLI command",
   "type": "module",
   "engines": {
