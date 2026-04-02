@@ -182,6 +182,15 @@ assert_contains "already"
 run_cmd $THECLAW upgrade --component nosuchcomponent --provider local
 assert_exit 2
 
+# Phase 4b: theclaw upgrade --component <name> --provider local (non-dry-run)
+section "Phase 4b: theclaw upgrade -- local provider, component already installed"
+
+# With local provider, all components are already installed (needsAction returns false when current != null)
+# So upgrade should report "already at" for each component and exit 0
+run_cmd $THECLAW upgrade --component pai --provider local
+assert_exit0
+assert_contains "already"
+
 # ══════════════════════════════════════════════════════════════
 # Phase 5: xar daemon lifecycle
 # ══════════════════════════════════════════════════════════════
@@ -307,7 +316,7 @@ assert_exit0
 section "Phase 10: Single-turn chat — agent A"
 
 # Send a simple message and wait for the agent to process it
-run_cmd $XAR send "$AGENT_A" "Reply with exactly the word PONG and nothing else"
+run_cmd $XAR send "$AGENT_A" "Reply with exactly the word PONG and nothing else" --source external:cli:main:dm:e2e:e2e-user
 assert_exit0
 assert_contains "delivered"
 
@@ -315,11 +324,11 @@ assert_contains "delivered"
 echo "  Waiting for agent A to process message..."
 AGENT_A_THREAD_DIR="$AGENT_A_DIR/threads"
 wait_for "agent A reply in thread" 60 \
-  '$THREAD peek --thread "$AGENT_A_THREAD_DIR/peers/cli" --last-event-id 0 2>/dev/null | grep -q "self"' \
-  -- "tail -20 $AGENT_A_DIR/logs/agent.log 2>/dev/null || echo 'no agent log yet'"
+  'grep -q "assistant" "$AGENT_A_DIR/sessions/peers/e2e-user.jsonl" 2>/dev/null' \
+  -- "tail -20 $THECLAW_HOME_ORIG/logs/agent-${AGENT_A}.log 2>/dev/null || echo 'no agent log yet'"
 
 # Verify thread has events (user message + assistant reply)
-run_cmd $THREAD peek --thread "$AGENT_A_THREAD_DIR/peers/cli" --last-event-id 0
+run_cmd cat "$AGENT_A_DIR/sessions/peers/e2e-user.jsonl"
 assert_exit0
 assert_line_count_gte 2
 assert_contains "PONG\|pong\|self"
@@ -330,7 +339,7 @@ assert_contains "PONG\|pong\|self"
 section "Phase 11: Multi-turn — send code to remember"
 
 # Send code for agent to remember
-run_cmd $XAR send "$AGENT_A" "Remember this secret code: ZETA-8832. Just confirm you got it."
+run_cmd $XAR send "$AGENT_A" "Remember this secret code: ZETA-8832. Just confirm you got it." --source external:cli:main:dm:e2e:e2e-user
 assert_exit0
 
 echo "  Waiting for agent A to process turn 2..."
@@ -339,14 +348,14 @@ sleep 15
 section "Phase 11: Multi-turn — recall the code"
 
 # Ask agent to recall the code
-run_cmd $XAR send "$AGENT_A" "What was the secret code I told you? Reply with just the code."
+run_cmd $XAR send "$AGENT_A" "What was the secret code I told you? Reply with just the code." --source external:cli:main:dm:e2e:e2e-user
 assert_exit0
 
 echo "  Waiting for agent A to process turn 3..."
 sleep 20
 
 # Check thread for the code in assistant reply
-run_cmd $THREAD peek --thread "$AGENT_A_THREAD_DIR/peers/cli" --last-event-id 0
+run_cmd cat "$AGENT_A_DIR/sessions/peers/e2e-user.jsonl"
 assert_exit0
 assert_line_count_gte 6
 assert_contains "ZETA-8832"
@@ -357,17 +366,17 @@ assert_contains "ZETA-8832"
 section "Phase 12: Multi-agent isolation — send to agent B"
 
 # Send to agent B — should have independent context
-run_cmd $XAR send "$AGENT_B" "Reply with exactly the word HELLO and nothing else"
+run_cmd $XAR send "$AGENT_B" "Reply with exactly the word HELLO and nothing else" --source external:cli:main:dm:e2e:e2e-user
 assert_exit0
 
 echo "  Waiting for agent B to process message..."
 AGENT_B_THREAD_DIR="$AGENT_B_DIR/threads"
 wait_for "agent B reply in thread" 60 \
-  '$THREAD peek --thread "$AGENT_B_THREAD_DIR/peers/cli" --last-event-id 0 2>/dev/null | grep -q "self"' \
-  -- "tail -20 $AGENT_B_DIR/logs/agent.log 2>/dev/null || echo 'no agent log yet'"
+  'grep -q "assistant" "$AGENT_B_DIR/sessions/peers/e2e-user.jsonl" 2>/dev/null' \
+  -- "tail -20 $THECLAW_HOME_ORIG/logs/agent-${AGENT_B}.log 2>/dev/null || echo 'no agent log yet'"
 
 # Verify agent B replied
-run_cmd $THREAD peek --thread "$AGENT_B_THREAD_DIR/peers/cli" --last-event-id 0
+run_cmd cat "$AGENT_B_DIR/sessions/peers/e2e-user.jsonl"
 assert_exit0
 assert_line_count_gte 2
 assert_contains "HELLO\|hello\|self"
@@ -381,14 +390,14 @@ assert_not_contains "ZETA-8832"
 section "Phase 13: Tool calling — bash_exec"
 
 # Send a message requiring tool use
-run_cmd $XAR send "$AGENT_A" "Use the bash_exec tool to run: echo E2E_TOOL_OK. Then reply with the exact output."
+run_cmd $XAR send "$AGENT_A" "Use the bash_exec tool to run: echo E2E_TOOL_OK. Then reply with the exact output." --source external:cli:main:dm:e2e:e2e-user
 assert_exit0
 
 echo "  Waiting for agent A to process tool call..."
 sleep 30
 
 # Check thread for tool call evidence
-run_cmd $THREAD peek --thread "$AGENT_A_THREAD_DIR/peers/cli" --last-event-id 0
+run_cmd cat "$AGENT_A_DIR/sessions/peers/e2e-user.jsonl"
 assert_exit0
 assert_contains "E2E_TOOL_OK"
 
@@ -398,17 +407,16 @@ assert_contains "E2E_TOOL_OK"
 section "Phase 14: Thread persistence"
 
 # Thread info should show accumulated events
-run_cmd $THREAD info --thread "$AGENT_A_THREAD_DIR/peers/cli"
+run_cmd cat "$AGENT_A_DIR/sessions/peers/e2e-user.jsonl"
 assert_exit0
 assert_nonempty
 
-run_cmd $THREAD info --thread "$AGENT_A_THREAD_DIR/peers/cli" --json
-assert_exit0
-assert_json_field "$OUT" "event_count"
+# Verify session has multiple turns
+assert_line_count_gte 4
 
 # JSONL file should exist alongside SQLite
-assert_file_exists "$AGENT_A_THREAD_DIR/peers/cli/events.db" "events.db"
-assert_file_exists "$AGENT_A_THREAD_DIR/peers/cli/events.jsonl" "events.jsonl"
+assert_file_exists "$AGENT_A_DIR/sessions/peers/e2e-user.jsonl" "session JSONL"
+assert_file_exists "$AGENT_A_THREAD_DIR/peers/e2e-user/events.db" "thread events.db"
 
 # ══════════════════════════════════════════════════════════════
 # Phase 15: Session file persistence
@@ -416,7 +424,7 @@ assert_file_exists "$AGENT_A_THREAD_DIR/peers/cli/events.jsonl" "events.jsonl"
 section "Phase 15: Session file"
 
 # Session JSONL should exist for the CLI thread
-SESS_FILE="$AGENT_A_DIR/sessions/peers/cli.jsonl"
+SESS_FILE="$AGENT_A_DIR/sessions/peers/e2e-user.jsonl"
 assert_file_exists "$SESS_FILE" "session JSONL"
 
 # ══════════════════════════════════════════════════════════════
@@ -487,14 +495,14 @@ assert_contains "running"
 section "Phase 19: Post-restart — context retained"
 
 # Ask agent A to recall code after restart
-run_cmd $XAR send "$AGENT_A" "What was the secret code I told you earlier? Reply with just the code."
+run_cmd $XAR send "$AGENT_A" "What was the secret code I told you earlier? Reply with just the code." --source external:cli:main:dm:e2e:e2e-user
 assert_exit0
 
 echo "  Waiting for agent A to process post-restart query..."
 sleep 20
 
 # Verify code still in thread
-run_cmd $THREAD peek --thread "$AGENT_A_THREAD_DIR/peers/cli" --last-event-id 0
+run_cmd cat "$AGENT_A_DIR/sessions/peers/e2e-user.jsonl"
 assert_exit0
 assert_contains "ZETA-8832"
 
@@ -504,7 +512,7 @@ assert_contains "ZETA-8832"
 section "Phase 20: Error cases"
 
 # Send to non-existent agent
-run_cmd $XAR send "no-such-agent-${RUN_ID}" "hello"
+run_cmd $XAR send "no-such-agent-${RUN_ID}" "hello" --source external:cli:main:dm:e2e:e2e-user
 assert_nonzero_exit
 
 # Stop non-existent agent
