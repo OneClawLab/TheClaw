@@ -40,7 +40,7 @@ TheClaw 是一个多 agent 系统，由 8 个独立组件组成，每个组件�
 
 **thread — 事件队列层**: 基于 SQLite 的持久化事件队列。Thread 即目录，双轨存储 (SQLite + JSONL)，events 只追加不修改。同时作为 library 被 xar import，提供 thread 读写能力。
 
-**xar — Agent 运行时**: Agent 生命周期管理和核心处理流程。以 daemon 形式常驻运行，管理多个 agent 的并发执行。消息到达后立即 thread 分配并持久化，不经过内存队列缓冲。并发粒度为 thread：不同 agent 并发，同一 agent 的不同 thread 并发，同一 thread 内串行（通过 thread 级别的 lock 保证）。通过 IPC 接收 xgw 的入站消息，处理后通过 IPC 将 streaming 响应推回 xgw。依赖: pai (LLM 调用), thread (事件存储)。
+**xar — Agent 运行时**: Agent 生命周期管理和核心处理流程。以 daemon 形式常驻运行，管理多个 agent 的并发执行。消息到达后立即 thread 分配并持久化，不经过内存队列缓冲。并发粒度为 thread：不同 agent 并发，同一 agent 的不同 thread 并发，同一 thread 内串行（通过 thread 级别的 lock 保证）。通过 IPC 接收 xgw 的入站消息，处理后通过 IPC 将 streaming 响应推回 xgw。内置 `send_message` tool 使 agent 能主动向任意 peer 或 agent 发送消息。依赖: pai (LLM 调用), thread (事件存储)。
 
 **xgw — 通信网关**: Agent 与外部 peer 的双向消息桥接器。Channel 插件化，入站归一化 + 网关路由，出站通过 Dispatcher 将 streaming 事件转发到 channel plugin。持有到 xar 的持久 IPC 连接。不 import 任何其他组件，只通过 IPC 与 xar 交互。
 
@@ -238,7 +238,7 @@ Thread Memory 用于 context 压缩（基础设施）。Per-Peer Memory 和 Agen
 
 #### Channel Plugin → xgw
 
-每个 channel_type 对应一个 channel plugin 实现，各 plugin 将渠道原始消息归一化为统一的 Message 结构：
+每个 channel_type 对应一个 channel plugin 实现，每个 channel_id 对应一个 channel plugin 的实例，各 plugin 将渠道原始消息归一化为统一的 Message 结构：
 
 | 字段 | 类型 | 说明 |
 |------|------|------|
@@ -314,10 +314,10 @@ target 的来源因场景而异：
 
 | 场景 | target 来源 |
 |------|------------|
-| 回复入站消息 | 从入站消息的 `source` 地址解析 |
+| 隐式 streaming 回复 | 从入站消息的 `source` 地址解析 |
+| send_message(peer:xxx) | 从 thread 上下文查找该 peer 最近的 external source 解析 |
 | 定时任务触发 | 从任务配置中读取 |
 | Agent 主动推送 | 从 agent 配置或运行时状态中获取 |
-| Agent 间通信结果回传 | 从原始请求的 source 中解析 |
 
 所有场景最终都走同一条出站路径。xgw 不区分这些场景。
 
@@ -438,14 +438,31 @@ xgw 将 IM 平台的子会话（Slack thread、Discord thread、Telegram forum t
 IPC 入站 → Thread 分配（根据 source + agent 配置，解析目标 thread 路径）
   → 写入目标 thread（持久化，thread CLI/LIB）
   → 获取 thread lock（同一 thread 内串行）
-  → 构造 context（最新 messages + memory）
-  → LLM 调用（pai LIB）
-  → 写回 thread（assistant 消息、toolcall 等）
-  → 出站（stream_start → stream_token... → stream_end → IPC → xgw）
+  → 构造 context（identity + memory + communication context + 最新 messages）
+  → LLM 调用（pai LIB，tools 包含 bash_exec + send_message）
+  → 写回 thread（assistant 消息、toolcall、send_message 记录等）
+  → 隐式出站（LLM text response → streaming → IPC → xgw，仅 external 来源）
   → 释放 thread lock
 ```
 
 并发粒度为 thread：不同 agent 并发，同一 agent 的不同 thread 并发，同一 thread 内串行。
+
+#### 出站模型：隐式 streaming + 显式 send_message
+
+Agent 有两条并存的出站路径：
+
+1. **隐式 streaming**：LLM 的 text response 自动 stream 给当前入站消息的 source peer。这是默认行为，适用于简单的 request-response 场景。仅当入站消息来自 external source 时生效；internal source（agent 间消息）不触发隐式出站。
+
+2. **显式 send_message tool**：LLM 主动调用，指定 target 和 content。适用于：
+   - 发给其他 agent（任务分发、协调）
+   - 发给非当前 peer 的人类
+   - 发送中间通知（如"处理中，请稍等"）
+   - 长任务过程中的进度更新
+   - agent 间的异步回复
+
+两者不冲突：一次 turn 里，LLM 可以先调几次 `send_message`（分发子任务、发中间通知），最后的 text response 仍然 streaming 回给当前 peer。
+
+对于 internal 消息（agent 间通信），LLM 的 text response 写入 thread 作为内部记录，但不自动出站。LLM 必须通过 `send_message` 显式回复。
 
 ### Thread 分配
 
@@ -483,6 +500,170 @@ Agent 自身写入 thread 的事件（toolcall、decision 等）使用 `self` �
 ### Agent 间通信
 
 Agent 间通信通过 xar daemon 内部投递，不经过 xgw。Agent A 向 Agent B 发消息时，xar 将消息路由到 B 的目标 thread（复用 Thread 分配逻辑），source 使用 `internal:...` 地址格式。
+
+Agent 间通信是完全异步的消息传递，不是 request-response。Agent B 收到消息后，通过 `send_message` tool 自行决定是否回复、回复几条、何时回复（见 [send_message tool](#send_message-tool)）。
+
+### send_message Tool
+
+`send_message` 是 xar 注册给 LLM 的内置 tool（与 `bash_exec` 并列），使 agent 能够主动向任意 target 发送消息。
+
+#### Tool Schema
+
+```typescript
+{
+  name: 'send_message',
+  description: `Send a message to a peer or agent outside the normal streaming reply.
+Use this when you need to:
+- Send a message to a different target than the current conversation peer
+- Send an intermediate notification before your main reply
+- Dispatch a task to another agent
+- Reply to an agent that delegated a task to you
+Your normal text response is automatically streamed to the current peer —
+you don't need send_message for that.`,
+  parameters: {
+    type: 'object',
+    properties: {
+      target: {
+        type: 'string',
+        description: 'Target address: "peer:<peer_id>" for humans, "agent:<agent_id>" for agents.',
+      },
+      content: {
+        type: 'string',
+        description: 'Message content.',
+      },
+    },
+    required: ['target', 'content'],
+  },
+}
+```
+
+#### Target 格式
+
+LLM 使用简化别名，代码层负责展开为完整路由地址：
+
+| Target 格式 | 说明 | 代码层行为 |
+|-------------|------|-----------|
+| `peer:<peer_id>` | 发给人类 peer | 从 thread 上下文查找该 peer 最近的 external source，解析出 channel_id 和 conversation_id，构造 OutboundTarget，通过 IPC → xgw 投递 |
+| `agent:<agent_id>` | 发给另一个 agent | 构造 internal source `internal:agent:<conv_id>:<self_agent_id>`，通过 daemon 内部 `sendToAgent` 投递到目标 agent 的 queue |
+
+LLM 不需要关心 channel_id、conversation_id 等路由细节。
+
+#### 执行流程
+
+```
+LLM 调用 send_message(target, content)
+  → xar tool executor 拦截（不走 bash_exec）
+  → 解析 target 前缀
+
+  case "peer:<peer_id>":
+    → 扫描当前 thread 的 recent events，找到该 peer_id 最近的 external source
+    → 从 source 解析出 OutboundTarget { channel_id, peer_id, conversation_id }
+    → 生成新 stream_id
+    → Deliver: stream_start → stream_token(content) → stream_end
+    → 写入 thread: { source: 'self', type: 'record', subtype: 'message', content }
+    → return { status: 'delivered', target }
+
+  case "agent:<agent_id>":
+    → 构造 internal source: internal:agent:<conv_id>:<self_agent_id>
+    → sendToAgent(agent_id, { source, content })
+    → 写入 thread: { source: 'self', type: 'record', subtype: 'message', content }
+    → return { status: 'delivered', target }
+
+  otherwise:
+    → return { status: 'error', message: 'invalid target format' }
+```
+
+对 `peer:` 目标的投递走标准出站协议（stream_start/token/end），xgw 无法区分这是 `send_message` 还是隐式 streaming，也不需要区分。
+
+#### 与 xar send CLI 的关系
+
+`xar send` CLI 用于外部触发的 agent 间消息投递（CLI、定时任务、其他系统）。`send_message` tool 用于 LLM 内部触发。两者底层路径一致（都走 `sendToAgent` 或 IPC 出站），入口不同。
+
+#### 与隐式 streaming 的共存
+
+一次 turn 中，LLM 可以同时使用两条出站路径：
+
+```
+用户发消息 → LLM 开始处理
+  → send_message(target='agent:researcher', content='帮我查一下 X')   # 显式：分发子任务
+  → send_message(target='peer:alice', content='收到，正在处理...')     # 显式：中间通知
+  → LLM 继续思考，产生 text response                                  # 隐式：streaming 回给 alice
+```
+
+如果 LLM 不想产生隐式 streaming 回复（比如只想发 send_message 然后等待），让 text response 为空即可。
+
+#### Agent 间交互模式
+
+agent 间通信不再有自动回复机制。被调用的 agent 通过 `send_message` 自行决定回复行为：
+
+```
+Admin agent 收到用户请求 "分析这份报告"
+  → LLM 调用 send_message(target='agent:analyst', content='请分析附件报告...')
+  → LLM text response: "好的，我已经安排分析，稍后给你结果。"（streaming 回给用户）
+
+Analyst agent 收到 internal 消息（来自 admin）
+  → LLM 处理分析任务
+  → LLM 调用 send_message(target='agent:admin', content='分析完成，结论是...')
+  → LLM text response 写入 thread 但不出站（internal 消息无隐式出站）
+
+Admin agent 收到 analyst 的回复（新一轮 turn）
+  → LLM 判断任务完成
+  → LLM text response: "报告分析完成。结论是..."（streaming 回给用户）
+```
+
+被调用的 agent 也可以发送多条消息（进度更新 + 最终结果），或者不回复（仅记录）。这完全由 agent 的 prompt 和 LLM 判断决定。
+
+### Communication Context 注入
+
+每次 LLM 调用时，`buildContext` 在 system prompt 中注入一段 Communication Context，告知 LLM 当前的通信环境。这是 `send_message` tool 正确工作的前提——LLM 需要知道可用的 target 和当前对话的性质。
+
+#### External 消息（来自人类 peer）
+
+```markdown
+## Communication Context
+- You are agent: admin
+- Conversation: dm with peer:alice (via telegram:main)
+- Current message from: peer:alice
+- Your text response will be streamed to peer:alice
+- Available agents: agent:warden, agent:maintainer, agent:evolver
+- Use send_message tool for messages to other targets
+```
+
+群聊场景：
+
+```markdown
+## Communication Context
+- You are agent: admin
+- Conversation: group grp-123 (via telegram:main)
+- Current message from: peer:bob
+- Recent participants: alice, bob, charlie
+- Your text response will be streamed to peer:bob
+- Available agents: agent:warden, agent:maintainer, agent:evolver
+- Use send_message tool for messages to other targets or to @mention specific peers
+```
+
+#### Internal 消息（来自其他 agent）
+
+```markdown
+## Communication Context
+- You are agent: analyst
+- Message from: agent:admin (conversation: admin-to-analyst)
+- Your text response will NOT be auto-delivered — use send_message to reply
+- Available agents: agent:admin, agent:warden, agent:maintainer, agent:evolver
+- Use send_message(target='agent:admin', content='...') to reply
+```
+
+关键区别：internal 消息时明确告知 "text response will NOT be auto-delivered"，引导 LLM 使用 `send_message` 回复。
+
+#### 注入内容来源
+
+| 信息 | 来源 |
+|------|------|
+| agent_id | 当前 agent 配置 |
+| conversation type/id | 从入站消息的 source 地址解析 |
+| peer_id, peer_name | 从入站消息的 source 地址解析 |
+| recent participants | 扫描当前 thread 的 recent events，提取不同的 peer_id |
+| available agents | 从 daemon 运行时状态获取（当前 running 的 agent 列表） |
 
 ### System Agents
 
@@ -535,10 +716,10 @@ Bob 在群里发言    →  同一个 thread: threads/conversations/grp-123/
 **定时任务 — agent 主动推送**:
 
 ```
-定时触发 → agent 处理 → Deliver(conn, savedTarget) → IPC → xgw → channel → peer
+定时触发 → agent 处理 → send_message(target='peer:alice', content='...') → IPC → xgw → channel → peer
 ```
 
-与普通回复走完全一样的出站路径。
+与 `send_message` 对 peer 的投递走完全一样的出站路径。
 
 ### 典型部署配置
 
