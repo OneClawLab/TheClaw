@@ -237,7 +237,7 @@ notifier timer add \
   --description "Warden periodic patrol"
 ```
 
-但 xar 的 run-loop 是持续运行的（v2 架构），不存在"inbox 为空时退出"的问题。warden 的巡检逻辑通过 `run_on_empty_inbox: true` 配置实现：即使没有新的 inbox 消息，run-loop 也会周期性执行一次 LLM 调用（让 LLM 决定是否需要执行巡检）。
+warden 的巡检逻辑通过 `run_on_empty_inbox: true` 配置实现：即使没有新的 inbox 消息，run-loop 也会周期性执行一次 LLM 调用（让 LLM 决定是否需要执行巡检）。
 
 ```json
 // warden config.json

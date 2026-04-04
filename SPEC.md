@@ -206,7 +206,7 @@ cd ${THECLAW_SOURCE_ROOT}/<name> && npm run build && npm link
 
 ---
 
-## Component Transformation Record (v1 → v2, completed)
+## Component Transformation Record
 
 ### pai — CLI/LIB Dual Interface Module
 
