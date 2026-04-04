@@ -123,6 +123,7 @@ function makeMockConn() {
   return {
     conn: {
       id: 'conn-1',
+      isOpen: vi.fn().mockReturnValue(true),
       send: vi.fn((msg: IpcMessage) => { sent.push(msg); return Promise.resolve() }),
       close: vi.fn(),
     },
