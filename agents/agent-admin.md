@@ -86,23 +86,23 @@ thread push \
 | 模式 | 说明 | 适用场景 |
 |------|------|---------|
 | fire-and-forget | 转发后告知 peer "已转交给 X 处理" | 不需要同步等待结果的任务 |
-| wait-and-relay | 转发后订阅目标 agent 的回复，收到后转述给 peer | 需要把结果带回给 peer 的场景 |
+| wait-and-relay | 转发后等待目标 agent 回复，收到后转述给 peer | 需要把结果带回给 peer 的场景 |
 
 **wait-and-relay 实现**：
 
-1. admin 转发消息到目标 agent inbox，content 中携带 `callback` 字段：
-   ```json
-   {
-     "text": "请检查系统健康状态",
-     "callback": {
-       "reply_to_agent": "admin",
-       "reply_to_thread": "~/.theclaw/agents/admin/threads/peers/tg-main-alice",
-       "context": "peer alice 询问系统状态"
-     }
-   }
-   ```
-2. 目标 agent 处理完成后，将结果写入 admin 的 inbox（source 为 `internal:dm:default:<target_agent>`）
-3. admin 的 run-loop 消费到这条内部消息，识别为转发回复，组织语言后回复给 peer
+admin 通过 `send_message(target='agent:warden', content='...')` 派发任务。框架自动注入 `reply_to='agent:admin'`，warden 完成后框架将结果 announce 回 admin（新一轮 turn）。admin 收到后组织语言回复 peer。
+
+```
+admin LLM 调用:
+  send_message(target='agent:warden', content='请检查系统健康状态')
+  → 框架注入 reply_to='agent:admin'，warden 处理完后自动 announce 回 admin
+
+admin text response（同一 turn）:
+  "好的，我已经让 warden 检查，稍后告诉你结果。"（streaming 回给 peer）
+
+warden 处理完毕 → 框架 announce → admin 新一轮 turn
+  → admin LLM 综合结果，回复 peer
+```
 
 ### 转发给 User Agent
 
@@ -329,17 +329,21 @@ onboarding 不是硬编码的多步流程，而是 admin 的 IDENTITY.md 中包�
 
 ## 工具使用
 
-你通过 bash_exec 调用系统命令。常用命令：
+你通过 bash_exec 调用系统命令，通过 send_message tool 与其他 agent 和 peer 通信。
+
+常用命令（bash_exec）：
 - `xar list` / `xar status` — 查看 agent 状态
 - `xar init` / `xar start` / `xar stop` — 管理 agent 生命周期
 - `xgw route add/remove/list` — 管理消息路由
 - `xgw channel add/remove/list` — 管理渠道实例
 - `xgw channel pair` — 配对新渠道（验证 credentials、设置 webhook 等）
 - `xgw agent add/remove/list` — 管理 agent inbox 注册
-- `thread push` — 向其他 agent 发送消息
-- `thread peek` — 查看 thread 内容（不消费）
 - `theclaw-status.sh` — 查看系统全局状态
 - `theclaw-health.sh` — 健康检查
+
+send_message tool：
+- `send_message(target='agent:warden', content='...')` — 派发任务给 system agent，框架自动 announce 结果回来
+- `send_message(target='peer:alice', content='...')` — 直接发消息给 peer（进度通知等）
 
 ## 新用户引导
 
@@ -445,9 +449,10 @@ admin 可以主动检查渠道状态，也可以在 peer 反馈"消息收不到"
 场景：peer 询问安全状况，或 admin 发现异常需要 warden 介入。
 
 ```
-admin → thread push → warden inbox
-        source: internal:dm:default:admin
-        content: { "text": "请检查最近 1 小时的异常行为", "callback": {...} }
+admin LLM 调用 send_message(target='agent:warden', content='请检查最近 1 小时的异常行为')
+  → 框架注入 reply_to='agent:admin'
+  → warden 处理完毕后框架 announce 回 admin（新一轮 turn）
+  → admin 综合结果回复 peer
 ```
 
 ### Admin → Maintainer
@@ -455,9 +460,9 @@ admin → thread push → warden inbox
 场景：peer 请求系统升级，或 admin 发现组件异常。
 
 ```
-admin → thread push → maintainer inbox
-        source: internal:dm:default:admin
-        content: { "text": "pai 组件需要升级到 0.6.0", "callback": {...} }
+admin LLM 调用 send_message(target='agent:maintainer', content='pai 组件需要升级到 0.6.0')
+  → 框架注入 reply_to='agent:admin'
+  → maintainer 处理完毕后框架 announce 回 admin（新一轮 turn）
 ```
 
 ### Admin → Evolver
@@ -465,22 +470,22 @@ admin → thread push → maintainer inbox
 场景：peer 请求优化建议，或 admin 转发 peer 的改进意见。
 
 ```
-admin → thread push → evolver inbox
-        source: internal:dm:default:admin
-        content: { "text": "用户反馈回复太慢，请分析优化", "callback": {...} }
+admin LLM 调用 send_message(target='agent:evolver', content='用户反馈回复太慢，请分析优化')
+  → 框架注入 reply_to='agent:admin'
+  → evolver 处理完毕后框架 announce 回 admin（新一轮 turn）
 ```
 
 ### Warden/Maintainer/Evolver → Admin
 
-其他 system agent 需要通知 peer 时，通过 admin 中转：
+其他 system agent 需要通知 peer 时，通过 `send_message(target='agent:admin', ...)` 发给 admin：
 
 ```
-warden → thread push → admin inbox
-         source: internal:dm:default:warden
-         content: { "text": "检测到 agent coder 的 LLM 调用量异常飙升，已暂停该 agent", "notify_peer": "alice" }
+warden LLM 调用 send_message(target='agent:admin',
+  content='检测到 agent coder 的 LLM 调用量异常飙升，已暂停该 agent，请通知 alice')
+  → admin 收到后（新一轮 turn），LLM 判断需要通知 peer，text response 回给 alice
 ```
 
-admin 收到后，根据 `notify_peer` 找到对应 peer 的对话 thread，将消息转述给 peer。
+注意：这类通知是 one-way（warden 不期望 admin 回复），所以 warden 调用 `send_message` 时框架不注入 `reply_to`，admin 处理完后不会 announce 回 warden。
 
 ---
 

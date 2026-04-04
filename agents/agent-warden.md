@@ -256,15 +256,15 @@ warden 发现问题后的响应动作：
 | 警告（中危命令、软限制超标、行为偏离） | 通知 owner，不自动停止 | `thread push` → admin inbox |
 | 信息（低危、统计报告） | 记录到 warden 自己的 thread | `thread push` → warden 巡检 thread |
 
-通知 owner 统一通过 admin 中转：
+通知 owner 统一通过 admin 中转，使用 `send_message` tool：
 
-```bash
-thread push \
-  --thread ~/.theclaw/agents/admin/inbox \
-  --source "internal:dm:default:warden" \
-  --type message \
-  --content '{"text":"⚠️ 安全告警: agent coder 执行了高危命令 rm -rf /tmp/data，已暂停该 agent","severity":"critical","agent_id":"coder","notify_peer":"alice"}'
 ```
+warden LLM 调用 send_message(target='agent:admin',
+  content='⚠️ 安全告警: agent coder 执行了高危命令 rm -rf /tmp/data，已暂停该 agent')
+  → admin 收到后（新一轮 turn），LLM 判断需要通知 peer，text response 回给 alice
+```
+
+这是 one-way 通知（warden 不期望 admin 回复），框架不注入 `reply_to`。
 
 ### 巡检状态持久化
 
@@ -376,22 +376,25 @@ warden 通过 `bash_exec` 读写此文件（JSON，LLM 可直接操作）。
 
 ## 通知 admin
 
-通过 thread push 向 admin inbox 发送告警：
+通过 send_message tool 向 admin 发送告警（one-way，不期望回复）：
+
 ```
-thread push --thread ~/.theclaw/agents/admin/inbox \
-  --source "internal:dm:default:warden" \
-  --type message \
-  --content '{"text":"告警内容","severity":"critical|warning|info","notify_peer":"<peer_id>"}'
+send_message(target='agent:admin', content='告警内容，请通知 alice')
 ```
 
 ## 工具使用
 
-你通过 bash_exec 调用系统命令。常用命令：
+你通过 bash_exec 调用系统命令，通过 send_message tool 与 admin 通信。
+
+bash_exec 常用命令：
 - `thread peek --thread <path> --filter "subtype IN ('toolcall','error','usage')"` — 读取事件
 - `xar stop <id>` — 停止异常 agent
 - `xar status --json` — 查看 agent 状态
 - `theclaw-health.sh --json` — 系统健康检查
 - `du -sh ~/.theclaw/agents/*/` — 磁盘使用
+
+send_message tool：
+- `send_message(target='agent:admin', content='...')` — 向 admin 发送告警/通知（one-way）
 
 ## 安全原则
 

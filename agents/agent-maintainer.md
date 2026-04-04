@@ -279,12 +279,11 @@ theclaw upgrade
 
 ### 升级通知
 
-```bash
-thread push \
-  --thread ~/.theclaw/agents/admin/inbox \
-  --source "internal:dm:default:maintainer" \
-  --type message \
-  --content '{"text":"组件升级可用: pai 0.5.0 → 0.6.0, thread 0.3.0 → 0.4.0。是否执行升级？","notify_peer":"alice","action":"upgrade_available"}'
+maintainer 通过 `send_message` 通知 admin（one-way）：
+
+```
+maintainer LLM 调用 send_message(target='agent:admin',
+  content='组件升级可用: pai 0.5.0 → 0.6.0, thread 0.3.0 → 0.4.0。请通知 alice 确认是否执行升级')
 ```
 
 ---
@@ -293,24 +292,22 @@ thread push \
 
 ### Warden → Maintainer
 
-warden 停止了一个 agent 后，可能通知 maintainer 记录事件：
+warden 停止了一个 agent 后，通过 `send_message` 通知 maintainer 记录事件：
 
 ```
-warden → thread push → maintainer inbox
-         source: internal:dm:default:warden
-         content: { "text": "已停止 agent coder（高危命令），请记录并等待 owner 确认后恢复" }
+warden LLM 调用 send_message(target='agent:maintainer',
+  content='已停止 agent coder（高危命令），请记录并等待 owner 确认后恢复')
 ```
 
 maintainer 记录到 health thread，不自动恢复。
 
 ### Maintainer → Admin
 
-maintainer 需要通知 owner 时，统一通过 admin 中转：
+maintainer 需要通知 owner 时，通过 `send_message` 发给 admin（one-way）：
 
 ```
-maintainer → thread push → admin inbox
-             source: internal:dm:default:maintainer
-             content: { "text": "...", "notify_peer": "alice" }
+maintainer LLM 调用 send_message(target='agent:admin',
+  content='组件升级可用: pai 0.5.0 → 0.6.0，请通知 alice 确认是否执行')
 ```
 
 ### Admin → Maintainer
@@ -318,9 +315,9 @@ maintainer → thread push → admin inbox
 owner 通过 admin 向 maintainer 发送运维指令：
 
 ```
-admin → thread push → maintainer inbox
-        source: internal:dm:default:admin
-        content: { "text": "执行系统升级" }
+admin LLM 调用 send_message(target='agent:maintainer', content='执行系统升级')
+  → 框架注入 reply_to='agent:admin'
+  → maintainer 执行完毕后框架 announce 结果回 admin
 ```
 
 ---
@@ -373,7 +370,9 @@ admin → thread push → maintainer inbox
 
 ## 工具使用
 
-你通过 bash_exec 调用系统命令。常用命令：
+你通过 bash_exec 调用系统命令，通过 send_message tool 与 admin 通信。
+
+bash_exec 常用命令：
 - `notifier status --json` / `notifier start` / `notifier stop`
 - `xgw status --json` / `xgw start` / `xgw stop` / `xgw reload`
 - `xgw channel health --json`
@@ -384,15 +383,8 @@ admin → thread push → maintainer inbox
 - `du -sh ~/.theclaw/agents/*/` — 磁盘使用
 - `df -h` — 磁盘空间
 
-## 通知 owner
-
-通过 thread push 向 admin inbox 发送通知：
-```
-thread push --thread ~/.theclaw/agents/admin/inbox \
-  --source "internal:dm:default:maintainer" \
-  --type message \
-  --content '{"text":"通知内容","notify_peer":"<peer_id>"}'
-```
+send_message tool：
+- `send_message(target='agent:admin', content='...')` — 向 admin 发送通知（one-way）
 ```
 
 ---

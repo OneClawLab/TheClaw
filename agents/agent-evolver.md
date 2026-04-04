@@ -94,14 +94,11 @@ draft → proposed → approved/rejected → executed/cancelled
 }
 ```
 
-Level 2 提案的审批通过 admin inbox 发送给 owner：
+Level 2 提案的审批通过 `send_message` 发给 admin（one-way）：
 
-```bash
-thread push \
-  --thread ~/.theclaw/agents/admin/inbox \
-  --source "internal:dm:default:evolver" \
-  --type message \
-  --content '{"text":"优化提案需要你的审批: [prop-20260320-001] 优化 admin 的 system prompt。详情: ...","notify_peer":"alice","action":"proposal_review"}'
+```
+evolver LLM 调用 send_message(target='agent:admin',
+  content='优化提案需要你的审批: [prop-20260320-001] 优化 admin 的 system prompt。详情: ...请通知 alice 审批')
 ```
 
 ---
