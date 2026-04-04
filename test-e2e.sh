@@ -65,7 +65,7 @@ on_cleanup() {
   $XAR daemon stop 2>/dev/null || true
   sleep 2
   # Force-kill leftover xar daemon if port still held
-  force_kill_port 18792
+  force_kill_port 28213
   rm -f "${THECLAW_HOME_ORIG}/xar.pid" "${THECLAW_HOME_ORIG}/xar.sock" 2>/dev/null || true
   # Remove test agents
   rm -rf "$AGENT_A_DIR" "$AGENT_B_DIR"
@@ -109,7 +109,7 @@ pass "Default LLM provider: $PROVIDER"
 # Ensure no stale daemons from previous runs
 $XAR daemon stop 2>/dev/null || true
 sleep 1
-force_kill_port 18792
+force_kill_port 28213
 rm -f "${THECLAW_HOME_ORIG}/xar.pid" "${THECLAW_HOME_ORIG}/xar.sock" 2>/dev/null || true
 
 # ══════════════════════════════════════════════════════════════

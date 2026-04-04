@@ -94,10 +94,10 @@ vi.mock('../../../xar/src/logging.js', () => ({
 
 let tmpBase = ''
 vi.mock('../../../xar/src/config.js', () => ({
-  getDaemonConfig: vi.fn(() => ({ theClawHome: tmpBase, ipcPort: 18792, logLevel: 'info' })),
+  getDaemonConfig: vi.fn(() => ({ theClawHome: tmpBase, ipcPort: 28213, logLevel: 'info' })),
   getSocketPath: vi.fn(() => path.join(tmpBase, 'xar.sock')),
   getTheClawHome: vi.fn(() => tmpBase),
-  getIpcPort: vi.fn(() => 18792),
+  getIpcPort: vi.fn(() => 28213),
   getLogLevel: vi.fn(() => 'info'),
 }))
 
