@@ -594,24 +594,30 @@ LLM 调用 send_message(target, content)
 
 #### Agent 间交互模式
 
-agent 间通信不再有自动回复机制。被调用的 agent 通过 `send_message` 自行决定回复行为：
+Agent 间通信采用 **push-based completion** 模型：orchestrator 通过 `send_message` 派发任务，worker 只需产出 plain text response，框架层自动完成结果回报，无需 worker LLM 主动调用 `send_message`。
 
 ```
 Admin agent 收到用户请求 "分析这份报告"
   → LLM 调用 send_message(target='agent:analyst', content='请分析附件报告...')
+    （框架自动注入 task_context 和 reply_to_peer 到 analyst 的入站消息）
   → LLM text response: "好的，我已经安排分析，稍后给你结果。"（streaming 回给用户）
 
 Analyst agent 收到 internal 消息（来自 admin）
-  → LLM 处理分析任务
-  → LLM 调用 send_message(target='agent:admin', content='分析完成，结论是...')
-  → LLM text response 写入 thread 但不出站（internal 消息无隐式出站）
+  → system prompt 注入 task_context：明确角色、禁止直接联系外部 peer
+  → LLM 处理分析任务，产出 plain text response
+  → 框架自动 announce：将 text response push 给 admin agent（新一轮 turn）
+  → 如果 reply_to_peer 存在，框架同时将结果 deliver 给 original peer
 
-Admin agent 收到 analyst 的回复（新一轮 turn）
-  → LLM 判断任务完成
+Admin agent 收到 analyst 的 announce（新一轮 turn）
+  → LLM 判断任务完成，综合结果
   → LLM text response: "报告分析完成。结论是..."（streaming 回给用户）
 ```
 
-被调用的 agent 也可以发送多条消息（进度更新 + 最终结果），或者不回复（仅记录）。这完全由 agent 的 prompt 和 LLM 判断决定。
+**关键设计**：
+- `reply_to_peer`：orchestrator 派发任务时携带当前 peer 的 OutboundTarget，worker 完成后框架自动 deliver 给 peer（best-effort）
+- `task_context`：注入 worker system prompt，明确"只返回 plain text，框架负责 deliver"，避免 LLM 行为不一致
+- 自动 announce：worker turn 结束后，run-loop 提取 assistant text，push 给 sender agent，触发 orchestrator 的下一轮处理
+- worker 仍然可以调用 `send_message(target='agent:...')` 做更复杂的多跳协作，但简单任务不再需要
 
 ### Communication Context 注入
 
