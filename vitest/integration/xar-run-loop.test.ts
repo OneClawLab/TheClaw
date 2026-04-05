@@ -61,7 +61,7 @@ vi.mock('../../../xar/src/agent/config.js', () => ({
     agent_id: 'bot',
     kind: 'user',
     pai: { provider: 'openai', model: 'gpt-4' },
-    routing: { default: 'per-peer' },
+    routing: { mode: 'reactive', trigger: 'mention' },
     memory: { compact_threshold_tokens: 8000, session_compact_threshold_tokens: 4000 },
     retry: { max_attempts: 3 },
   }),
