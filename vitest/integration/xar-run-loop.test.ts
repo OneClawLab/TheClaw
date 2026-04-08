@@ -81,6 +81,7 @@ vi.mock('pai', () => ({
     getProviderInfo: vi.fn().mockResolvedValue({ name: 'openai', defaultModel: 'gpt-4', contextWindow: 128000, maxTokens: 4096 }),
   }),
   createBashExecTool: vi.fn().mockReturnValue({ name: 'bash_exec', description: 'Run bash', parameters: {}, handler: vi.fn() }),
+  defineTool: (tool: unknown) => tool,
 }))
 
 vi.mock('../../../xar/src/logging.js', () => ({
