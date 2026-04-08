@@ -79,6 +79,7 @@ export async function createFileLogger(
   }
 
   function writeLine(level: LogLevel, message: string): void {
+    if (stream.destroyed || stream.writableEnded) return;
     if (currentLines >= maxLines) rotate();
     stream.write(formatLogLine(level, message) + '\n');
     currentLines++;
@@ -90,6 +91,7 @@ export async function createFileLogger(
     error(message) { writeLine('ERROR', message); },
     debug(message) { writeLine('DEBUG', message); },
     close(): Promise<void> {
+      if (stream.destroyed) return Promise.resolve();
       return new Promise((resolve, reject) => {
         stream.end((err?: Error | null) => { if (err) reject(err); else resolve(); });
       });
