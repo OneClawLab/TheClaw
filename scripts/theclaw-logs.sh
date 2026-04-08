@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
 # theclaw-logs.sh - Show recent logs for platform components
-# 需求：6.2 - Does NOT depend on theclaw CLI itself
+# Does NOT depend on theclaw CLI itself
 # Usage: theclaw-logs.sh [--lines <n>] [--component <name>]
+#
+# Log file locations:
+#   $THECLAW_HOME/logs/xar.log          — xar daemon
+#   $THECLAW_HOME/logs/agent-<id>.log   — per-agent logs
+#   $THECLAW_HOME/logs/notifier.log     — notifier daemon
+#   $THECLAW_HOME/logs/xgw.log          — xgw daemon
 
 set -euo pipefail
 
@@ -9,7 +15,6 @@ THECLAW_HOME="${THECLAW_HOME:-$HOME/.theclaw}"
 LINES=20
 COMPONENT=""
 
-# Parse arguments
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --lines)
@@ -26,7 +31,7 @@ while [[ $# -gt 0 ]]; do
       echo "Options:"
       echo "  --lines <n>        Number of log lines to show (default: 20)"
       echo "  --component <name> Show logs for specific component only"
-      echo "                     Valid components: notifier, xgw, agents, agent:<id>"
+      echo "                     Valid: notifier, xgw, xar, agents, agent:<id>"
       exit 0
       ;;
     *)
@@ -37,7 +42,6 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# Helper: show tail of a log file
 show_log() {
   local label="$1"
   local logfile="$2"
@@ -51,33 +55,34 @@ show_log() {
 }
 
 show_notifier_logs() {
-  local logfile="${THECLAW_HOME}/logs/notifier.log"
-  show_log "Notifier (last $LINES lines)" "$logfile"
+  show_log "Notifier (last $LINES lines)" "${THECLAW_HOME}/logs/notifier.log"
 }
 
 show_xgw_logs() {
-  local logfile="${THECLAW_HOME}/logs/xgw.log"
-  show_log "XGW (last $LINES lines)" "$logfile"
+  show_log "XGW (last $LINES lines)" "${THECLAW_HOME}/logs/xgw.log"
+}
+
+show_xar_logs() {
+  show_log "XAR daemon (last $LINES lines)" "${THECLAW_HOME}/logs/xar.log"
 }
 
 show_agent_logs() {
   local agent_id="${1:-}"
-  local agents_dir="${THECLAW_HOME}/agents"
+  local logs_dir="${THECLAW_HOME}/logs"
 
   if [ -n "$agent_id" ]; then
-    local logfile="${agents_dir}/${agent_id}/logs/agent.log"
-    show_log "Agent: $agent_id (last $LINES lines)" "$logfile"
+    show_log "Agent: $agent_id (last $LINES lines)" "${logs_dir}/agent-${agent_id}.log"
   else
+    # Show logs for all known agents
+    local agents_dir="${THECLAW_HOME}/agents"
     if [ -d "$agents_dir" ]; then
-      found=0
+      local found=0
       for agent_dir in "$agents_dir"/*/; do
-        if [ -d "$agent_dir" ]; then
-          local id
-          id="$(basename "$agent_dir")"
-          local logfile="${agent_dir}logs/agent.log"
-          show_log "Agent: $id (last $LINES lines)" "$logfile"
-          found=1
-        fi
+        [ -d "$agent_dir" ] || continue
+        local id
+        id="$(basename "$agent_dir")"
+        show_log "Agent: $id (last $LINES lines)" "${logs_dir}/agent-${id}.log"
+        found=1
       done
       if [ "$found" -eq 0 ]; then
         echo "--- Agents ---"
@@ -95,11 +100,11 @@ show_agent_logs() {
 echo "=== TheClaw Logs ==="
 echo ""
 
-# Route based on --component filter
 case "$COMPONENT" in
   "")
     show_notifier_logs
     show_xgw_logs
+    show_xar_logs
     show_agent_logs
     ;;
   notifier)
@@ -108,16 +113,18 @@ case "$COMPONENT" in
   xgw)
     show_xgw_logs
     ;;
+  xar)
+    show_xar_logs
+    ;;
   agents)
     show_agent_logs
     ;;
   agent:*)
-    agent_id="${COMPONENT#agent:}"
-    show_agent_logs "$agent_id"
+    show_agent_logs "${COMPONENT#agent:}"
     ;;
   *)
     echo "[error] Unknown component: $COMPONENT" >&2
-    echo "Valid components: notifier, xgw, agents, agent:<id>" >&2
+    echo "Valid components: notifier, xgw, xar, agents, agent:<id>" >&2
     exit 2
     ;;
 esac

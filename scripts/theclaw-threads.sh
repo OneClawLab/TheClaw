@@ -1,14 +1,18 @@
 #!/usr/bin/env bash
 # theclaw-threads.sh - List and summarize thread directories for all agents
-# 需求：6.3 - Does NOT depend on theclaw CLI itself
+# Does NOT depend on theclaw CLI itself
 # Usage: theclaw-threads.sh [--agent <id>]
+#
+# Thread layout per agent:
+#   $THECLAW_HOME/agents/<id>/threads/<thread-id>/events.db     — SQLite DB
+#   $THECLAW_HOME/agents/<id>/threads/<thread-id>/events.jsonl  — append-only event log
+#   $THECLAW_HOME/agents/<id>/sessions/<thread-id>.jsonl        — LLM session (compacted)
 
 set -euo pipefail
 
 THECLAW_HOME="${THECLAW_HOME:-$HOME/.theclaw}"
 AGENT_FILTER=""
 
-# Parse arguments
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --agent)
@@ -48,7 +52,6 @@ for agent_dir in "$AGENTS_DIR"/*/; do
 
   agent_id="$(basename "$agent_dir")"
 
-  # Apply --agent filter if specified
   if [ -n "$AGENT_FILTER" ] && [ "$agent_id" != "$AGENT_FILTER" ]; then
     continue
   fi
@@ -57,6 +60,8 @@ for agent_dir in "$AGENTS_DIR"/*/; do
   echo "--- Agent: $agent_id ---"
 
   threads_dir="${agent_dir}threads"
+  sessions_dir="${agent_dir}sessions"
+
   if [ ! -d "$threads_dir" ]; then
     echo "  No threads directory found"
     echo ""
@@ -69,49 +74,40 @@ for agent_dir in "$AGENTS_DIR"/*/; do
     thread_id="$(basename "$thread_dir")"
     thread_count=$((thread_count + 1))
 
-    # Gather summary info
-    msg_count=0
-    last_modified=""
-    status_info=""
-
-    # Count messages if messages file/dir exists
-    if [ -f "${thread_dir}messages.json" ]; then
-      # Count lines as rough proxy, or use jq if available
-      if command -v jq &>/dev/null; then
-        msg_count=$(jq 'length' "${thread_dir}messages.json" 2>/dev/null || echo "?")
-      else
-        msg_count="(jq not available)"
-      fi
-    elif [ -d "${thread_dir}messages" ]; then
-      msg_count=$(find "${thread_dir}messages" -type f | wc -l | tr -d ' ')
+    # Count events from events.jsonl (one JSON object per line)
+    event_count=0
+    events_jsonl="${thread_dir}events.jsonl"
+    if [ -f "$events_jsonl" ]; then
+      event_count=$(grep -c . "$events_jsonl" 2>/dev/null || echo 0)
     fi
 
-    # Get last modified time of thread directory
+    # Check if a compacted session file exists
+    session_file="${sessions_dir}/${thread_id}.jsonl"
+    has_session=""
+    if [ -f "$session_file" ]; then
+      session_lines=$(grep -c . "$session_file" 2>/dev/null || echo 0)
+      has_session=" (session: ${session_lines} msgs)"
+    fi
+
+    # Last modified time of the thread directory
+    last_modified=""
     if command -v stat &>/dev/null; then
       last_modified=$(stat -c '%y' "$thread_dir" 2>/dev/null \
         || stat -f '%Sm' -t '%Y-%m-%d %H:%M:%S' "$thread_dir" 2>/dev/null \
-        || echo "unknown")
-    fi
-
-    # Check for status file
-    if [ -f "${thread_dir}status" ]; then
-      status_info=$(cat "${thread_dir}status" 2>/dev/null || echo "")
-    elif [ -f "${thread_dir}status.json" ]; then
-      if command -v jq &>/dev/null; then
-        status_info=$(jq -r '.status // empty' "${thread_dir}status.json" 2>/dev/null || echo "")
-      fi
+        || echo "")
+      # Trim sub-second precision
+      last_modified="${last_modified%%.*}"
     fi
 
     echo "  Thread: $thread_id"
-    [ -n "$last_modified" ] && echo "    Last modified: $last_modified"
-    [ "$msg_count" != "0" ] && echo "    Messages: $msg_count"
-    [ -n "$status_info" ] && echo "    Status: $status_info"
+    [ -n "$last_modified" ] && echo "    Modified: $last_modified"
+    echo "    Events:  ${event_count}${has_session}"
   done
 
   if [ "$thread_count" -eq 0 ]; then
     echo "  No threads found"
   else
-    echo "  Total threads: $thread_count"
+    echo "  Total: $thread_count thread(s)"
   fi
   echo ""
 done

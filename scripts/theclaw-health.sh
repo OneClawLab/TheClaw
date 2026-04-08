@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # theclaw-health.sh - Health check for all platform components
-# 需求：6.5、6.6、6.7 - Does NOT depend on theclaw CLI itself
+# Does NOT depend on theclaw CLI itself
 # Usage: theclaw-health.sh [--json]
 
 set -euo pipefail
@@ -8,7 +8,6 @@ set -euo pipefail
 THECLAW_HOME="${THECLAW_HOME:-$HOME/.theclaw}"
 JSON_OUTPUT=0
 
-# Parse arguments
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --json)
@@ -19,7 +18,7 @@ while [[ $# -gt 0 ]]; do
       echo "Usage: $0 [--json]"
       echo ""
       echo "Options:"
-      echo "  --json   Output structured JSON (HealthCheckResult format)"
+      echo "  --json   Output structured JSON"
       exit 0
       ;;
     *)
@@ -31,87 +30,78 @@ while [[ $# -gt 0 ]]; do
 done
 
 # ── Check functions ──────────────────────────────────────────────────────────
+# Each sets CHECK_STATUS (ok|warning|error) and CHECK_DETAIL
 
-# Returns: sets CHECK_STATUS (ok|warning|error) and CHECK_DETAIL
 check_notifier() {
   if ! command -v notifier &>/dev/null; then
-    CHECK_STATUS="error"
-    CHECK_DETAIL="notifier command not found"
-    return
+    CHECK_STATUS="error"; CHECK_DETAIL="notifier command not found"; return
   fi
   local out
   if out=$(notifier status 2>&1); then
-    CHECK_STATUS="ok"
-    CHECK_DETAIL="running"
+    CHECK_STATUS="ok"; CHECK_DETAIL="running"
   else
-    CHECK_STATUS="error"
-    CHECK_DETAIL="notifier status failed: $(echo "$out" | head -1)"
+    CHECK_STATUS="error"; CHECK_DETAIL="notifier status failed: $(echo "$out" | head -1)"
   fi
 }
 
 check_xgw() {
   if ! command -v xgw &>/dev/null; then
-    CHECK_STATUS="error"
-    CHECK_DETAIL="xgw command not found"
-    return
+    CHECK_STATUS="error"; CHECK_DETAIL="xgw command not found"; return
   fi
   local out
   if out=$(xgw status 2>&1); then
-    CHECK_STATUS="ok"
-    CHECK_DETAIL="running"
+    CHECK_STATUS="ok"; CHECK_DETAIL="running"
   else
-    CHECK_STATUS="error"
-    CHECK_DETAIL="xgw status failed: $(echo "$out" | head -1)"
+    CHECK_STATUS="error"; CHECK_DETAIL="xgw status failed: $(echo "$out" | head -1)"
   fi
 }
 
-# Check a single agent; sets CHECK_STATUS and CHECK_DETAIL
+check_xar_daemon() {
+  local pid_file="${THECLAW_HOME}/xar.pid"
+  if [ ! -f "$pid_file" ]; then
+    CHECK_STATUS="error"; CHECK_DETAIL="not running (no pid file)"; return
+  fi
+  local pid
+  pid=$(cat "$pid_file")
+  if kill -0 "$pid" 2>/dev/null; then
+    CHECK_STATUS="ok"; CHECK_DETAIL="running (pid $pid)"
+  else
+    CHECK_STATUS="error"; CHECK_DETAIL="stopped (stale pid $pid)"
+  fi
+}
+
 check_agent() {
   local agent_id="$1"
-  if ! command -v agent &>/dev/null; then
-    CHECK_STATUS="error"
-    CHECK_DETAIL="agent command not found"
-    return
+  local config_file="${THECLAW_HOME}/agents/${agent_id}/config.json"
+  if [ ! -f "$config_file" ]; then
+    CHECK_STATUS="error"; CHECK_DETAIL="config.json not found"; return
   fi
-  local out
-  if out=$(agent status "$agent_id" 2>&1); then
-    CHECK_STATUS="ok"
-    CHECK_DETAIL="running"
+  if command -v xar &>/dev/null; then
+    local out
+    if out=$(xar status "$agent_id" 2>&1); then
+      CHECK_STATUS="ok"; CHECK_DETAIL="ok"
+    else
+      CHECK_STATUS="warning"; CHECK_DETAIL="xar status failed: $(echo "$out" | head -1)"
+    fi
   else
-    CHECK_STATUS="error"
-    CHECK_DETAIL="agent status $agent_id failed: $(echo "$out" | head -1)"
+    CHECK_STATUS="ok"; CHECK_DETAIL="config present (xar not available for runtime check)"
   fi
 }
 
-# Check inbox backlog for an agent; sets CHECK_STATUS and CHECK_DETAIL
-check_agent_inbox() {
+check_agent_sessions() {
   local agent_id="$1"
-  local inbox_dir="${THECLAW_HOME}/agents/${agent_id}/inbox"
-  if [ ! -d "$inbox_dir" ]; then
-    CHECK_STATUS="ok"
-    CHECK_DETAIL="inbox dir not found (assuming empty)"
+  local sessions_dir="${THECLAW_HOME}/agents/${agent_id}/sessions"
+  if [ ! -d "$sessions_dir" ]; then
+    CHECK_STATUS="ok"; CHECK_DETAIL="no sessions yet"
     return
   fi
   local count
-  count=$(find "$inbox_dir" -maxdepth 1 -type f | wc -l | tr -d ' ')
-  if [ "$count" -eq 0 ]; then
-    CHECK_STATUS="ok"
-    CHECK_DETAIL="inbox empty"
-  elif [ "$count" -lt 10 ]; then
-    CHECK_STATUS="ok"
-    CHECK_DETAIL="inbox backlog: $count"
-  elif [ "$count" -lt 50 ]; then
-    CHECK_STATUS="warning"
-    CHECK_DETAIL="inbox backlog: $count (elevated)"
-  else
-    CHECK_STATUS="error"
-    CHECK_DETAIL="inbox backlog: $count (critical)"
-  fi
+  count=$(find "$sessions_dir" -maxdepth 1 -name "*.jsonl" | wc -l | tr -d ' ')
+  CHECK_STATUS="ok"; CHECK_DETAIL="${count} session file(s)"
 }
 
 # ── Collect results ──────────────────────────────────────────────────────────
 
-# Arrays to accumulate check results
 declare -a CHECK_NAMES=()
 declare -a CHECK_STATUSES=()
 declare -a CHECK_DETAILS=()
@@ -130,6 +120,9 @@ add_check "notifier" "$CHECK_STATUS" "$CHECK_DETAIL"
 check_xgw
 add_check "xgw" "$CHECK_STATUS" "$CHECK_DETAIL"
 
+check_xar_daemon
+add_check "xar:daemon" "$CHECK_STATUS" "$CHECK_DETAIL"
+
 AGENTS_DIR="${THECLAW_HOME}/agents"
 if [ -d "$AGENTS_DIR" ]; then
   for agent_dir in "$AGENTS_DIR"/*/; do
@@ -139,12 +132,12 @@ if [ -d "$AGENTS_DIR" ]; then
     check_agent "$agent_id"
     add_check "agent:${agent_id}" "$CHECK_STATUS" "$CHECK_DETAIL"
 
-    check_agent_inbox "$agent_id"
-    add_check "agent:${agent_id}:inbox" "$CHECK_STATUS" "$CHECK_DETAIL"
+    check_agent_sessions "$agent_id"
+    add_check "agent:${agent_id}:sessions" "$CHECK_STATUS" "$CHECK_DETAIL"
   done
 fi
 
-# Determine overall health
+# Overall health: any error → unhealthy
 overall_healthy=true
 for s in "${CHECK_STATUSES[@]}"; do
   if [ "$s" = "error" ]; then
@@ -156,7 +149,6 @@ done
 # ── Output ───────────────────────────────────────────────────────────────────
 
 if [ "$JSON_OUTPUT" -eq 1 ]; then
-  # Build HealthCheckResult JSON
   healthy_val="true"
   $overall_healthy || healthy_val="false"
 
@@ -169,7 +161,6 @@ if [ "$JSON_OUTPUT" -eq 1 ]; then
     name="${CHECK_NAMES[$i]}"
     status="${CHECK_STATUSES[$i]}"
     detail="${CHECK_DETAILS[$i]}"
-    # Escape detail for JSON
     detail_escaped="${detail//\\/\\\\}"
     detail_escaped="${detail_escaped//\"/\\\"}"
     comma=""

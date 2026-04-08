@@ -1,8 +1,15 @@
 #!/usr/bin/env bash
 # theclaw-trace.sh - Trace a message through the platform in timeline format
-# 需求：6.4 - Does NOT depend on theclaw CLI itself
-# Usage: theclaw-trace.sh --message-id <uuid>
-#        theclaw-trace.sh --keyword <text> [--since <time>]
+# Does NOT depend on theclaw CLI itself
+# Usage: theclaw-trace.sh --keyword <text> [--since <time>]
+#        theclaw-trace.sh --message-id <uuid>
+#
+# Log file locations searched:
+#   $THECLAW_HOME/logs/notifier.log
+#   $THECLAW_HOME/logs/xgw.log
+#   $THECLAW_HOME/logs/xar.log
+#   $THECLAW_HOME/logs/agent-<id>.log
+#   $THECLAW_HOME/agents/<id>/threads/<thread-id>/events.jsonl
 
 set -euo pipefail
 
@@ -11,7 +18,6 @@ MESSAGE_ID=""
 KEYWORD=""
 SINCE=""
 
-# Parse arguments
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --message-id)
@@ -27,13 +33,13 @@ while [[ $# -gt 0 ]]; do
       shift 2
       ;;
     -h|--help)
-      echo "Usage: $0 --message-id <uuid>"
-      echo "       $0 --keyword <text> [--since <time>]"
+      echo "Usage: $0 --keyword <text> [--since <time>]"
+      echo "       $0 --message-id <uuid>"
       echo ""
       echo "Options:"
-      echo "  --message-id <uuid>   Trace a specific message by UUID"
       echo "  --keyword <text>      Search for messages containing keyword"
-      echo "  --since <time>        Limit search to entries after this time (e.g. '2024-01-01 00:00:00')"
+      echo "  --message-id <uuid>   Search for a specific message UUID"
+      echo "  --since <time>        Limit to entries after this time (e.g. '2024-01-01 00:00:00')"
       exit 0
       ;;
     *)
@@ -45,10 +51,12 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [ -z "$MESSAGE_ID" ] && [ -z "$KEYWORD" ]; then
-  echo "[error] Must specify --message-id <uuid> or --keyword <text>" >&2
+  echo "[error] Must specify --keyword <text> or --message-id <uuid>" >&2
   echo "Use --help for usage information." >&2
   exit 2
 fi
+
+PATTERN="${MESSAGE_ID:-$KEYWORD}"
 
 LOGS_DIR="${THECLAW_HOME}/logs"
 AGENTS_DIR="${THECLAW_HOME}/agents"
@@ -56,80 +64,63 @@ AGENTS_DIR="${THECLAW_HOME}/agents"
 echo "=== TheClaw Message Trace ==="
 if [ -n "$MESSAGE_ID" ]; then
   echo "Message ID: $MESSAGE_ID"
-elif [ -n "$KEYWORD" ]; then
+else
   echo "Keyword: $KEYWORD"
   [ -n "$SINCE" ] && echo "Since: $SINCE"
 fi
 echo ""
 
-# Collect matching log lines with source labels into a temp file for sorting
 TMPFILE="$(mktemp)"
 trap 'rm -f "$TMPFILE"' EXIT
 
-# Helper: search a log file and append matches with label
+# Search a log file; append matching lines as "<content>\t[label:lineno]"
 search_log() {
   local label="$1"
   local logfile="$2"
-
   [ -f "$logfile" ] || return 0
 
-  if [ -n "$MESSAGE_ID" ]; then
-    grep -n "$MESSAGE_ID" "$logfile" 2>/dev/null | while IFS=: read -r lineno content; do
-      echo "$content	[$label:$lineno]"
-    done >> "$TMPFILE" || true
-  else
-    # Keyword search with optional --since filter
+  grep -n "$PATTERN" "$logfile" 2>/dev/null | while IFS=: read -r lineno content; do
+    # Apply --since filter on ISO timestamp prefix if present
     if [ -n "$SINCE" ]; then
-      grep -n "$KEYWORD" "$logfile" 2>/dev/null | while IFS=: read -r lineno content; do
-        # Simple time filter: compare leading timestamp if present
-        ts=$(echo "$content" | grep -oE '^[0-9]{4}-[0-9]{2}-[0-9]{2}[T ][0-9]{2}:[0-9]{2}:[0-9]{2}' || true)
-        if [ -z "$ts" ] || [[ "$ts" > "$SINCE" ]] || [[ "$ts" == "$SINCE" ]]; then
-          echo "$content	[$label:$lineno]"
-        fi
-      done >> "$TMPFILE" || true
-    else
-      grep -n "$KEYWORD" "$logfile" 2>/dev/null | while IFS=: read -r lineno content; do
-        echo "$content	[$label:$lineno]"
-      done >> "$TMPFILE" || true
+      ts=$(echo "$content" | grep -oE '^[0-9]{4}-[0-9]{2}-[0-9]{2}[T ][0-9]{2}:[0-9]{2}:[0-9]{2}' || true)
+      if [ -n "$ts" ] && [[ "$ts" < "$SINCE" ]]; then
+        continue
+      fi
     fi
-  fi
+    printf '%s\t[%s:%s]\n' "$content" "$label" "$lineno"
+  done >> "$TMPFILE" || true
 }
 
-# Search notifier log
-search_log "notifier" "${LOGS_DIR}/notifier.log"
+# Platform logs
+search_log "notifier"   "${LOGS_DIR}/notifier.log"
+search_log "xgw"        "${LOGS_DIR}/xgw.log"
+search_log "xar"        "${LOGS_DIR}/xar.log"
 
-# Search xgw log
-search_log "xgw" "${LOGS_DIR}/xgw.log"
-
-# Search all agent logs and thread message files
+# Per-agent logs and thread event logs
 if [ -d "$AGENTS_DIR" ]; then
   for agent_dir in "$AGENTS_DIR"/*/; do
     [ -d "$agent_dir" ] || continue
     agent_id="$(basename "$agent_dir")"
 
-    # Agent main log
-    search_log "agent:${agent_id}" "${agent_dir}logs/agent.log"
+    search_log "agent:${agent_id}" "${LOGS_DIR}/agent-${agent_id}.log"
 
-    # Thread message files
+    # Thread events.jsonl files (one JSON object per line)
     if [ -d "${agent_dir}threads" ]; then
       for thread_dir in "${agent_dir}threads"/*/; do
         [ -d "$thread_dir" ] || continue
         thread_id="$(basename "$thread_dir")"
-        if [ -f "${thread_dir}messages.json" ]; then
-          search_log "agent:${agent_id}/thread:${thread_id}" "${thread_dir}messages.json"
-        fi
+        search_log "agent:${agent_id}/thread:${thread_id}" "${thread_dir}events.jsonl"
       done
     fi
   done
 fi
 
-# Output results sorted by timestamp (lines starting with ISO timestamp sort naturally)
+# Output sorted by timestamp prefix (ISO timestamps sort lexicographically)
 if [ ! -s "$TMPFILE" ]; then
   echo "No matching entries found."
 else
   echo "Timeline:"
   echo "─────────────────────────────────────────────────────"
-  # Sort by the log line content (timestamp prefix sorts chronologically)
   sort "$TMPFILE" | while IFS=$'\t' read -r content source; do
     printf "  %-60s  %s\n" "$content" "$source"
   done
