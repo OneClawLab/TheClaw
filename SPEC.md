@@ -403,7 +403,7 @@ xar exposes IPC Server supporting following operations:
 
 ### Connection Method
 
-Connect via TCP loopback (`127.0.0.1:28213`).
+Connect via TCP loopback (`127.0.0.1:29211`).
 
 ### Message Types
 

@@ -368,7 +368,7 @@ interface SendParams {
 
 xgw 与 xar 之间通过持久 WebSocket 连接通信：
 
-- 连接方式：TCP loopback（`127.0.0.1:28213`）
+- 连接方式：TCP loopback（`127.0.0.1:29211`）
 - 自动重连：断线后指数退避重连（3s → 60s 上限）
 - 入站缓冲：xar 不可用时，xgw 在内存中缓冲最多 100 条入站消息，重连后按序发送
 
@@ -768,7 +768,7 @@ pai:
 xgw:
   gateway:
     host: 127.0.0.1
-    port: 28211
+    port: 29212
   channels:
     - id: telegram:main
       token: "${TELEGRAM_BOT_TOKEN}"
@@ -945,7 +945,7 @@ pai:
 xgw:
   gateway:
     host: 127.0.0.1
-    port: 28211
+    port: 29212
   channels: []
   routing: []
 
@@ -995,5 +995,5 @@ defaults:
 
 | 用途 | 类型 | 地址 | 说明 |
 |------|------|------|------|
-| xar IPC | TCP | `127.0.0.1:28213` | xgw ↔ xar 内部通信 |
-| xgw gateway | TCP | `127.0.0.1:28211` | xgw 对外服务端口（WebSocket/HTTP，供 TUI 等客户端连接） |
+| xar IPC | TCP | `127.0.0.1:29211` | xgw ↔ xar 内部通信 |
+| xgw gateway | TCP | `127.0.0.1:29212` | xgw 对外服务端口（WebSocket/HTTP，供 TUI 等客户端连接） |
